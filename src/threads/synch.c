@@ -45,7 +45,7 @@ struct semaphore_elem
   Returns true if thread A has lower priority than thread B.
  */
 static bool
-synch_thread_list_priority_compare (const struct list_elem *a, const struct list_elem *b) {
+synch_thread_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux) {
   return list_entry (a, struct thread, elem)->priority < 
     list_entry(b, struct thread, elem)->priority;
 }
@@ -58,15 +58,15 @@ synch_thread_list_priority_compare (const struct list_elem *a, const struct list
   Returns true for thread A lower priority than thread B.
 */
 static bool
-synch_sema_list_priority_compare (const struct list_elem *a, const struct list_elem *b) {
+synch_sema_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux) {
   struct semaphore_elem *sem_a = list_entry (a, struct semaphore_elem, elem);
   struct semaphore_elem *sem_b = list_entry (b, struct semaphore_elem, elem);
 
   /* FIX ME: perhaps needs to be more robust against empty lists */
-  ASSERT (!list_empty (sem_a->waiters));
-  ASSERT (!list_empty (sem_b->waiters));
-  struct thread *thread_a = list_entry (list_front (sem_a->waiters), struct thread, elem);
-  struct thread *thread_b = list_entry (list_front (sem_b->waiters), struct thread, elem);
+  ASSERT (!list_empty(&sem_a->semaphore.waiters));
+  ASSERT (!list_empty(&sem_b->semaphore.waiters));
+  struct thread *thread_a = list_entry (list_front (&sem_a->semaphore.waiters), struct thread, elem);
+  struct thread *thread_b = list_entry (list_front (&sem_b->semaphore.waiters), struct thread, elem);
 
   return thread_a->priority < thread_b->priority;
 }
