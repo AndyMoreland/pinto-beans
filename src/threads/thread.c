@@ -496,7 +496,7 @@ next_thread_to_run (void)
 {
   // FIX ME: iterate through lists here
   int i;
-  for (i = PRI_MAX; i >= 0; i++) 
+  for (i = PRI_MAX; i >= 0; i--) 
     if (!list_empty (&ready_lists[i]))
       return list_entry (list_pop_front (&ready_lists[i]), struct thread, elem);
 
