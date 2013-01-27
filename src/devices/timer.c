@@ -89,7 +89,8 @@ timer_compare_sleeping_threads (const struct list_elem *a,
                                 const struct list_elem *b,
                                 void *aux) 
 {
-  if (a->sleep_until < b->sleep_until)
+  if (list_entry (a, struct thread, sleepelem)->sleep_until < 
+      list_entry(b, struct thread, sleepelem)->sleep_until)
     return true;
   else
     return false;
@@ -108,16 +109,16 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  enum intr_level old_level = intr_disable();
+  enum intr_level old_level = intr_disable ();
   int64_t start = timer_ticks ();
-  struct thread *cur = thread_current();
+  struct thread *cur = thread_current ();
 
   cur->sleep_until = start + ticks;
-  list_insert_ordered (&sleeping_threads, cur->sleepelem, 
+  list_insert_ordered (&sleeping_threads, &cur->sleepelem, 
                        timer_compare_sleeping_threads, NULL);
 
-  thread_block();
-  intr_enable(old_level);
+  thread_block ();
+  intr_enable ();
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -195,8 +196,8 @@ timer_print_stats (void)
    Returns false if more time needed. */
 static bool
 timer_attempt_wake(struct thread *thr) {
-  if(thr->sleep_until < timer_ticks ()) {
-    list_remove (thr->sleepelem);
+  if(thr->sleep_until <= timer_ticks ()) {
+    list_remove (&thr->sleepelem);
     thread_unblock(thr);
     return true; 
   } else {
@@ -211,7 +212,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   struct list_elem *e;
 
-  for(e = list_begin (&sleeping_threads); e != list_end (&sleeping_threads); e = list_next (e)) {
+  for(e = list_begin (&sleeping_threads); e != list_end (&sleeping_threads); e = list_next (e))
     if(!timer_attempt_wake(list_entry (e, struct thread, sleepelem)))
       break;
 
