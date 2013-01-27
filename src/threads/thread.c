@@ -91,7 +91,9 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
-  for(int i = 0; i < PRI_COUNT; i++)
+
+  int i;
+  for(i = 0; i < PRI_COUNT; i++)
     list_init(&ready_lists[i]);
   list_init (&all_list);
 
@@ -239,7 +241,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list[t->priority], &t->elem);
+  list_push_back (&ready_lists[t->priority], &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -493,7 +495,8 @@ static struct thread *
 next_thread_to_run (void) 
 {
   // FIX ME: iterate through lists here
-  for (int i = PRI_MAX; i >= 0; i++) 
+  int i;
+  for (i = PRI_MAX; i >= 0; i++) 
     if (!list_empty (&ready_lists[i]))
       return list_entry (list_pop_front (&ready_lists[i]), struct thread, elem);
 
