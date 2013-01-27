@@ -84,7 +84,7 @@ timer_ticks (void)
 /* Comparison function for sleeping thread list.
    Returns true if thread A has an earlier wakeup than thread B.
    Returns false otherwise. */
-bool 
+static bool 
 timer_compare_sleeping_threads (const struct list_elem *a,
                                 const struct list_elem *b,
                                 void *aux) 
