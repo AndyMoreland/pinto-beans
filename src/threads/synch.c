@@ -33,6 +33,13 @@
 #include "threads/thread.h"
 
 
+/* One semaphore in a list. */
+struct semaphore_elem 
+  {
+    struct list_elem elem;              /* List element. */
+    struct semaphore semaphore;         /* This semaphore. */
+  };
+
 /*
   Comparison function used with list_max.
   Returns true if thread A has lower priority than thread B.
@@ -57,7 +64,7 @@ synch_sema_list_priority_compare (const struct list_elem *a, const struct list_e
 
   /* FIX ME: perhaps needs to be more robust against empty lists */
   struct thread *thread_a = list_entry (list_front (sem_a->waiters), struct thread, elem);
-  struct thread *thread_b = list_entry (list_front (sem_a->waiters), struct thread, elem);
+  struct thread *thread_b = list_entry (list_front (sem_b->waiters), struct thread, elem);
 
   return thread_a->priority < thread_b->priority;
 }
@@ -277,13 +284,8 @@ lock_held_by_current_thread (const struct lock *lock)
 
   return lock->holder == thread_current ();
 }
-
-/* One semaphore in a list. */
-struct semaphore_elem 
-  {
-    struct list_elem elem;              /* List element. */
-    struct semaphore semaphore;         /* This semaphore. */
-  };
+
+
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
