@@ -32,6 +32,36 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+
+/*
+  Comparison function used with list_max.
+  Returns true if thread A has lower priority than thread B.
+ */
+static bool
+synch_thread_list_priority_compare (struct list *a, struct list *b) {
+  return list_entry (a, struct thread, elem)->priority < 
+    list_entry(b, struct thread, elem)->priority;
+}
+
+
+/*
+  Comparison function used with list_max.
+  Used for finding next thread to wake up after
+  cond signal.
+  Returns true for thread A lower priority than thread B.
+*/
+static bool
+synch_sema_list_priority_compare (struct list *a, struct list *b) {
+  struct semaphore_elem *sem_a = list_entry (a, struct semaphore_elem, elem);
+  struct semaphore_elem *sem_b = list_entry (b, struct semaphore_elem, elem);
+
+  /* FIX ME: perhaps needs to be more robust against empty lists */
+  struct thread *thread_a = list_entry (list_front (sem_a->waiters), struct thread, elem);
+  struct thread *thread_b = list_entry (list_front (sem_a->waiters), struct thread, elem);
+
+  return thread_a->priority < thread_b->priority;
+}
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -114,7 +144,9 @@ sema_up (struct semaphore *sema)
 
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
+    thread_unblock (list_entry (list_max (&sema->waiters,
+                                          synch_thread_list_priority_compare,
+                                          NULL),
                                 struct thread, elem));
   sema->value++;
   intr_set_level (old_level);
