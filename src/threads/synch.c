@@ -45,7 +45,7 @@ struct semaphore_elem
   Returns true if thread A has lower priority than thread B.
  */
 static bool
-synch_thread_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux) {
+synch_thread_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
   return list_entry (a, struct thread, elem)->priority < 
     list_entry(b, struct thread, elem)->priority;
 }
@@ -58,7 +58,7 @@ synch_thread_list_priority_compare (const struct list_elem *a, const struct list
   Returns true for thread A lower priority than thread B.
 */
 static bool
-synch_sema_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux) {
+synch_sema_list_priority_compare (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
   struct semaphore_elem *sem_a = list_entry (a, struct semaphore_elem, elem);
   struct semaphore_elem *sem_b = list_entry (b, struct semaphore_elem, elem);
 
@@ -355,7 +355,7 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (lock_held_by_current_thread (lock));
 
   if (!list_empty (&cond->waiters)) {
-    struct list_entry *max_elem = list_max (&cond->waiters, synch_sema_list_priority_compare, NULL);
+    struct list_elem *max_elem = list_max (&cond->waiters, synch_sema_list_priority_compare, NULL);
     list_remove(max_elem);
     sema_up (&list_entry (max_elem, struct semaphore_elem, elem)->semaphore);
   }
