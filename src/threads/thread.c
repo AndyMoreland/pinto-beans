@@ -208,6 +208,14 @@ thread_create (const char *name, int priority,
   return tid;
 }
 
+void thread_donate_priority_to_thread (struct thread *a, struct thread *b) {
+  a->blocked_on = b;
+  struct thread *cursor;
+  for (cursor = b; cursor != NULL && a->priority > cursor->priority; cursor = cursor->blocked_on) {
+    thread_change_priority (cursor, a->priority);
+  }
+}
+
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -335,11 +343,25 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+/* FIXME: comment */
+void
+thread_change_priority (struct thread *t, int newPriority) {
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  t->priority = newPriority;
+  if (t->status == THREAD_READY) {
+    list_remove (&t->elem);
+    list_push_back (&ready_lists[newPriority], &t->elem);
+  }
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  thread_current ()->native_priority = new_priority;
+//   thread_current ()->priority = new_priority;
+  // FIXME: thread priority escalation / yield
 }
 
 /* Returns the current thread's priority. */
@@ -466,6 +488,8 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->native_priority = priority;
+  list_init (&t->locks);
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
