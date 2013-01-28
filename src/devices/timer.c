@@ -114,6 +114,7 @@ timer_sleep (int64_t ticks)
   struct thread *cur = thread_current ();
 
   cur->sleep_until = start + ticks;
+  //printf("Sleeping thread %s\n", cur->name);
   list_insert_ordered (&sleeping_threads, &cur->sleepelem, 
                        timer_compare_sleeping_threads, NULL);
 

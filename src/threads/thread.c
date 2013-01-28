@@ -65,12 +65,14 @@ static void kernel_thread (thread_func *, void *aux);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
+static struct thread *find_next_thread_to_run (void);
 static void init_thread (struct thread *, const char *name, int priority);
 static bool is_thread (struct thread *) UNUSED;
 static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -170,6 +172,8 @@ tid_t
 thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
+
+  //thread_foreach (print_name, NULL);
   struct thread *t;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
@@ -185,6 +189,7 @@ thread_create (const char *name, int priority,
 
   /* Initialize thread. */
   init_thread (t, name, priority);
+  //printf("initializing thread %s\n", t->name);
   tid = t->tid = allocate_tid ();
 
   /* Stack frame for kernel_thread(). */
@@ -229,6 +234,8 @@ thread_block (void)
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
 
+  //printf("Blocking thread: %s\n", thread_current ()->name);
+
   thread_current ()->status = THREAD_BLOCKED;
   schedule ();
 }
@@ -244,8 +251,8 @@ thread_block (void)
 void
 thread_unblock (struct thread *t) 
 {
+  //printf("Unblocking thread %s\n", t->name);
   enum intr_level old_level;
-
   ASSERT (is_thread (t));
 
   old_level = intr_disable ();
@@ -303,6 +310,7 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
+  //printf("Preparing to kill %s", thread_current()->name);
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
@@ -314,6 +322,7 @@ thread_exit (void)
 void
 thread_yield (void) 
 {
+  //printf("Yielding thread '%s'\n", thread_current()->name);
   struct thread *cur = thread_current ();
   enum intr_level old_level;
   
@@ -395,7 +404,7 @@ thread_set_priority (int new_priority)
   current->native_priority = new_priority;
   thread_update_actual_priority (current);
   
-  if (current->priority < next_thread_to_run ()->priority) {
+  if (current->priority < find_next_thread_to_run ()->priority) {
     thread_yield();
   } 
   
@@ -548,6 +557,18 @@ alloc_frame (struct thread *t, size_t size)
   return t->stack;
 }
 
+static struct thread *
+find_next_thread_to_run (void) 
+{
+  
+  int i;
+  for (i = PRI_MAX; i >= 0; i--)
+    if (!list_empty (&ready_lists[i]))
+      return list_entry (list_begin (&ready_lists[i]), struct thread, elem);
+
+  return idle_thread;
+}
+
 /* Chooses and returns the next thread to be scheduled.  Should
    return a thread from the run queue, unless the run queue is
    empty.  (If the running thread can continue running, then it
@@ -557,12 +578,11 @@ static struct thread *
 next_thread_to_run (void) 
 {
   // FIX ME: iterate through lists here
-  int i;
-  for (i = PRI_MAX; i >= 0; i--)
-    if (!list_empty (&ready_lists[i]))
-      return list_entry (list_pop_front (&ready_lists[i]), struct thread, elem);
-
-  return idle_thread;
+  struct thread *next = find_next_thread_to_run ();
+  if (next != idle_thread) {
+    list_remove (&next->elem);
+  }
+  return next;
 }
 
 /* Completes a thread switch by activating the new thread's page
