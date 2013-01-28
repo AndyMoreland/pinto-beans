@@ -162,12 +162,17 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
+
   struct thread *max_waiter = sema_highest_waiter (sema);
   if (max_waiter != NULL) {
     list_remove (&max_waiter->elem);
     thread_unblock (max_waiter);
   }
   sema->value++;
+  
+  if (max_waiter != NULL && max_waiter->priority > thread_current ()->priority) {
+    thread_yield();
+  } 
   intr_set_level (old_level);
 }
 
@@ -254,6 +259,7 @@ lock_acquire (struct lock *lock)
   }
 
   thread_current ()->blocked_lock = lock;  
+  printf ("thread %s donating to %s\n", thread_current ()->name, lock->holder->name);
   thread_donate_priority_to_thread (thread_current (), lock->holder);  
   sema_down (&lock->semaphore);
   thread_current ()->blocked_lock = NULL;
