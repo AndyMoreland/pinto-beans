@@ -50,7 +50,7 @@ synch_thread_list_priority_compare (const struct list_elem *a, const struct list
     list_entry(b, struct thread, elem)->priority;
 }
 
-static struct thread*
+struct thread*
 sema_highest_waiter (const struct semaphore* sema) {
   if (!list_empty (&sema->waiters)) {
     return list_entry (list_back (&sema->waiters), struct thread, elem);
@@ -252,9 +252,11 @@ lock_acquire (struct lock *lock)
     intr_set_level(old_level);
     return;
   }
-  
+
+  thread_current ()->blocked_lock = lock;  
   thread_donate_priority_to_thread (thread_current (), lock->holder);  
   sema_down (&lock->semaphore);
+  thread_current ()->blocked_lock = NULL;
   lock->holder = thread_current ();
   list_push_front (&lock->holder->locks, &lock->elem);
 
@@ -285,6 +287,11 @@ lock_try_acquire (struct lock *lock)
   return success;
 }
 
+static inline int
+int_max (int a, int b) {
+  return a > b? a : b;
+}
+
 /* Releases LOCK, which must be owned by the current thread.
 
    An interrupt handler cannot acquire a lock, so it does not
@@ -299,20 +306,7 @@ lock_release (struct lock *lock)
   enum intr_level old_level = intr_disable();
 
   list_remove (&lock->elem);
-  struct thread *current = lock->holder;
-  current->priority = current->native_priority;
-  struct list_elem *cursor;
-  for (cursor = list_begin (&current->locks);
-       cursor != list_end (&current->locks);
-       cursor = list_next (cursor)) {
-    struct lock *heldLock = list_entry (cursor, struct lock, elem);
-    struct thread *max_waiter = sema_highest_waiter(&heldLock->semaphore);
-    
-    if (max_waiter != NULL && max_waiter->priority > current->priority) {
-      current->priority = max_waiter->priority;
-    }
-  }
-
+  thread_update_actual_priority(lock->holder);
   lock->holder = NULL;
   sema_up (&lock->semaphore);
   

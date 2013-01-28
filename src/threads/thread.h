@@ -90,7 +90,7 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     int native_priority;                /* native thread priority that cannot be escalated. */
-    struct thread *blocked_on;
+    struct lock *blocked_lock;
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
@@ -142,6 +142,8 @@ int thread_get_priority (void);
 void thread_set_priority (int);
 void thread_change_priority (struct thread *t, int newPriority);
 void thread_donate_priority_to_thread (struct thread *a, struct thread *b);
+int thread_compute_donated_priority (struct thread *t);
+void thread_update_actual_priority (struct thread *t);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

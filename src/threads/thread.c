@@ -209,9 +209,10 @@ thread_create (const char *name, int priority,
 }
 
 void thread_donate_priority_to_thread (struct thread *a, struct thread *b) {
-  a->blocked_on = b;
   struct thread *cursor;
-  for (cursor = b; cursor != NULL && a->priority > cursor->priority; cursor = cursor->blocked_on) {
+  // FIXME: shit code
+  for (cursor = b; cursor != NULL && a->priority > cursor->priority; 
+       cursor = cursor->blocked_lock? cursor->blocked_lock->holder : NULL) {
     thread_change_priority (cursor, a->priority);
   }
 }
@@ -355,13 +356,50 @@ thread_change_priority (struct thread *t, int newPriority) {
   }
 }
 
+/* Computes the thread's donated priority */
+int
+thread_compute_donated_priority (struct thread *t) {
+  int max_priority = -1;
+  struct list_elem *cursor;
+  for (cursor = list_begin (&t->locks);
+       cursor != list_end (&t->locks);
+       cursor = list_next (cursor)) {
+    struct lock *heldLock = list_entry (cursor, struct lock, elem);
+    struct thread *max_waiter = sema_highest_waiter(&heldLock->semaphore);
+    
+    if (max_waiter != NULL && max_waiter->priority > max_priority) {
+      max_priority = max_waiter->priority;
+    }
+  }
+  return max_priority;
+}
+
+/* FIXME: comment */
+void 
+thread_update_actual_priority (struct thread *t) {
+  int donated = thread_compute_donated_priority (t);
+  if (t->native_priority > donated) { 
+    t->priority = t->native_priority;
+  } else {
+    t->priority = donated;
+  }
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->native_priority = new_priority;
-//   thread_current ()->priority = new_priority;
-  // FIXME: thread priority escalation / yield
+  enum intr_level old_level = intr_disable();  
+
+  struct thread *current = thread_current ();
+  current->native_priority = new_priority;
+  thread_update_actual_priority (current);
+  
+  if (current->priority < next_thread_to_run ()->priority) {
+    thread_yield();
+  } 
+  
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -520,7 +558,7 @@ next_thread_to_run (void)
 {
   // FIX ME: iterate through lists here
   int i;
-  for (i = PRI_MAX; i >= 0; i--) 
+  for (i = PRI_MAX; i >= 0; i--)
     if (!list_empty (&ready_lists[i]))
       return list_entry (list_pop_front (&ready_lists[i]), struct thread, elem);
 
