@@ -52,10 +52,11 @@ synch_thread_list_priority_compare (const struct list_elem *a, const struct list
 
 struct thread*
 sema_highest_waiter (const struct semaphore* sema) {
-  if (!list_empty (&sema->waiters)) {
-    return list_entry (list_back (&sema->waiters), struct thread, elem);
-  } else {
+  if (list_empty (&sema->waiters)) {
     return NULL;
+  } else {
+    struct list_elem *elem = list_max (&sema->waiters, synch_thread_list_priority_compare, NULL);
+    return list_entry (elem, struct thread, elem);
   }
 }
 
@@ -115,9 +116,7 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_insert_ordered (&sema->waiters, &thread_current ()->elem,
-                           synch_thread_list_priority_compare,
-                           NULL);
+      list_push_back (&sema->waiters, &thread_current ()->elem);
       thread_block ();
     }
   sema->value--;
@@ -259,7 +258,6 @@ lock_acquire (struct lock *lock)
   }
 
   thread_current ()->blocked_lock = lock;  
-  printf ("thread %s donating to %s\n", thread_current ()->name, lock->holder->name);
   thread_donate_priority_to_thread (thread_current (), lock->holder);  
   sema_down (&lock->semaphore);
   thread_current ()->blocked_lock = NULL;

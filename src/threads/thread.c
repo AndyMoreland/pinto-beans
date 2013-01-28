@@ -219,7 +219,6 @@ void thread_donate_priority_to_thread (struct thread *a, struct thread *b) {
   // FIXME: shit code
   for (cursor = b; cursor != NULL && a->priority > cursor->priority; 
        cursor = cursor->blocked_lock? cursor->blocked_lock->holder : NULL) {
-    printf ("changing %s to priority %d\n", cursor->name, a->priority);
     thread_change_priority (cursor, a->priority);
   }
 }
@@ -363,7 +362,7 @@ thread_change_priority (struct thread *t, int new_priority) {
   t->priority = new_priority;
   if (t->status == THREAD_READY) {
     list_remove (&t->elem);
-    list_push_back (&ready_lists[newPriority], &t->elem);
+    list_push_back (&ready_lists[new_priority], &t->elem);
   }
 }
 
