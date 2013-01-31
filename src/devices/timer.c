@@ -114,7 +114,6 @@ timer_sleep (int64_t ticks)
   struct thread *cur = thread_current ();
 
   cur->sleep_until = start + ticks;
-  //printf("Sleeping thread %s\n", cur->name);
   list_insert_ordered (&sleeping_threads, &cur->sleepelem, 
                        timer_compare_sleeping_threads, NULL);
 
@@ -196,14 +195,16 @@ timer_print_stats (void)
    Returns true if it succeeds.
    Returns false if more time needed. */
 static bool
-timer_attempt_wake(struct thread *thr) {
-  if(thr->sleep_until <= timer_ticks ()) {
-    list_remove (&thr->sleepelem);
-    thread_unblock(thr);
-    return true; 
-  } else {
+timer_attempt_wake (struct thread *thr) 
+{
+  if (thr->sleep_until <= timer_ticks ()) 
+    {
+      list_remove (&thr->sleepelem);
+      thread_unblock (thr);
+      return true; 
+    }  
+  else
     return false;
-  }
 }
 
 /* Timer interrupt handler. */
@@ -213,8 +214,9 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   struct list_elem *e;
 
-  for(e = list_begin (&sleeping_threads); e != list_end (&sleeping_threads); e = list_next (e))
-    if(!timer_attempt_wake(list_entry (e, struct thread, sleepelem)))
+  /* Wake as many threads as possible */
+  for (e = list_begin (&sleeping_threads); e != list_end (&sleeping_threads); e = list_next (e))
+    if (!timer_attempt_wake (list_entry (e, struct thread, sleepelem)))
       break;
 
   thread_tick ();
