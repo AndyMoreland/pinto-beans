@@ -82,6 +82,7 @@ static tid_t allocate_tid (void);
 static void thread_mlfqs_update_load_average (void);
 static void thread_mlfqs_update_priority (struct thread *t, void *aux);
 static void thread_mlfqs_update_recent_cpu (struct thread *t, void *aux);
+static void thread_possibly_yield (void);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -150,6 +151,8 @@ thread_tick (void)
   else
     kernel_ticks++;
 
+//  printf ("[thread_ticks=%d, timer_ticks=%d]\n", thread_ticks + 1, timer_ticks ());
+
   if (thread_mlfqs)
     {
       enum intr_level old_level = intr_disable();
@@ -162,13 +165,16 @@ thread_tick (void)
         }
       if (timer_ticks () % MLFQS_PRI_RECOMPUTE_TICKS == 0)
         thread_foreach (thread_mlfqs_update_priority, NULL);
+
       intr_set_level (old_level);
     }
   
 
   /* Enforce preemption. */
-  if (++thread_ticks >= TIME_SLICE)
+  if (++thread_ticks >= TIME_SLICE) {
+    //printf ("intr_yielding on %d ticks\n", timer_ticks ());
     intr_yield_on_return ();
+  }
 }
 
 /* Prints thread statistics. */
@@ -241,6 +247,8 @@ thread_create (const char *name, int priority,
 }
 
 void thread_donate_priority_to_thread (struct thread *a, struct thread *b) {
+  if (thread_mlfqs)
+    return;
   struct thread *cursor;
   // FIXME: shit code
   for (cursor = b; cursor != NULL && a->priority > cursor->priority; 
@@ -344,6 +352,13 @@ thread_exit (void)
   NOT_REACHED ();
 }
 
+static void
+thread_possibly_yield (void)
+{
+//  printf ("possibly yielding on %d ticks\n", timer_ticks ());
+  if (thread_current ()->priority < find_next_thread_to_run ()->priority)
+    thread_yield ();
+}
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void
@@ -475,9 +490,7 @@ thread_set_priority (int new_priority)
   current->native_priority = new_priority;
   thread_update_actual_priority (current);
   
-  if (current->priority < find_next_thread_to_run ()->priority) {
-    thread_yield ();
-  } 
+  thread_possibly_yield (); 
   
   intr_set_level (old_level);
 }
@@ -486,7 +499,7 @@ static int
 thread_get_ready_thread_count (void) {
   int i;
   int ready_threads = 0;
-  for (i = PRI_MIN; i < PRI_COUNT; i++)
+  for (i = 0; i < PRI_COUNT; i++)
     ready_threads += list_size (&ready_lists[i]);
 
   if (thread_current () != idle_thread) {
@@ -497,21 +510,13 @@ thread_get_ready_thread_count (void) {
 
 static void
 thread_mlfqs_update_load_average (void) {
-  fixed_point coef1 = fixed_point_ratio (59, 60);
-  fixed_point coef2 = fixed_point_ratio (1, 60);  
   int ready_thread_count = thread_get_ready_thread_count ();
-//  printf ("ready thread count: %d\n", ready_thread_count);
 
   fixed_point new_load_avg = fixed_point_divide_int (
     fixed_point_add_int (fixed_point_multiply_int (load_average, 59), ready_thread_count),
     60);
 
-//  fixed_point new_load_avg = fixed_point_add (
-//    fixed_point_multiply (coef1, load_average),
-//    fixed_point_multiply_int (coef2, ready_thread_count));
-
   load_average = new_load_avg;
-//  printf ("load average: %d\n", load_average.impl_value);
 }
 
 /* Returns the current thread's priority. */
@@ -547,14 +552,14 @@ int
 thread_get_load_avg (void) 
 {
   //printf ("load avg default: %d [raw: %d]\n", fixed_point_truncate (load_average), load_average.impl_value);
-  return fixed_point_truncate (fixed_point_multiply_int (load_average, 100));
+  return fixed_point_round (fixed_point_multiply_int (load_average, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  return fixed_point_truncate (fixed_point_multiply_int (thread_current ()->recent_cpu, 100));
+  return fixed_point_round (fixed_point_multiply_int (thread_current ()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -750,6 +755,8 @@ thread_schedule_tail (struct thread *prev)
    thread to run and switches to it.
 
    It's not safe to call printf() until thread_schedule_tail()
+i/  if (thread_current ()->nice == 7 && timer_ticks () >= 300)
+//    printf ("running thread: %s (ticks: %d)\n", thread_current ()->name, timer_ticks ());
    has completed. */
 static void
 schedule (void) 

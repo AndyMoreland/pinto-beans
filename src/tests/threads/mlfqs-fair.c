@@ -90,7 +90,8 @@ test_mlfqs_fair (int thread_cnt, int nice_min, int nice_step)
       ti->tick_count = 0;
       ti->nice = nice;
 
-      snprintf(name, sizeof name, "load %d", i);
+      snprintf(name, sizeof name, "load %d n: %d", i, ti->nice);
+//    msg ("creating %s", name);
       thread_create (name, PRI_DEFAULT, load_thread, ti);
 
       nice += nice_step;
@@ -107,6 +108,9 @@ test_mlfqs_fair (int thread_cnt, int nice_min, int nice_step)
 static void
 load_thread (void *ti_) 
 {
+  //int hit_ticks[80];
+  int index = 0;
+
   struct thread_info *ti = ti_;
   int64_t sleep_time = 5 * TIMER_FREQ;
   int64_t spin_time = sleep_time + 30 * TIMER_FREQ;
@@ -117,8 +121,17 @@ load_thread (void *ti_)
   while (timer_elapsed (ti->start_time) < spin_time) 
     {
       int64_t cur_time = timer_ticks ();
-      if (cur_time != last_time)
+      if (cur_time != last_time) {
+//        if (ti->nice == 8) {
+//          hit_ticks[index++] = (int) cur_time;
+//        }
         ti->tick_count++;
+      }
       last_time = cur_time;
     }
+
+//  int i;
+//  for (i = 0; i < index; i++) {
+//    printf ("hit index %d\n", hit_ticks[i]);
+//  }
 }
