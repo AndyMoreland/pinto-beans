@@ -3,6 +3,10 @@
 #ifndef THREADS_FIXED_POINT_H
 #define THREADS_FIXED_POINT_H
 
+#ifdef FIXED_POINT_INLINE
+#include "fixed-point-inline.h"
+#else
+
 #define FRACTION_BITS 14
 
 typedef struct {
@@ -100,4 +104,5 @@ fixed_point_ratio (int num, int denom) {
   return fixed_point_divide_int (fixed_point_create (num), denom);
 }
 
+#endif
 #endif

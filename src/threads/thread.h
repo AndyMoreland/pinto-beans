@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+//#define FIXED_POINT_INLINE
 #include "fixed-point.h"
 
 /* States in a thread's life cycle. */
