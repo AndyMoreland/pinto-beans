@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -24,6 +25,13 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 #define PRI_COUNT (PRI_MAX + 1)
+
+/* Thread default MLFQS values */
+#define NICE_DEFAULT 0
+#define NICE_MAX 20
+#define NICE_MIN (-20)
+#define RECENT_CPU_DEFAULT (fixed_point_create (0))
+#define LOAD_AVERAGE_DEFAULT 0
 
 /* A kernel thread or user process.
 
@@ -89,6 +97,9 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+    int nice;                           /* Nice value for MLFQS. */
+    fixed_point recent_cpu;             /* Recent cpu for MLFQS. */
+   
     int native_priority;                /* native thread priority that cannot be escalated. */
     struct lock *blocked_lock;
     struct list_elem allelem;           /* List element for all threads list. */

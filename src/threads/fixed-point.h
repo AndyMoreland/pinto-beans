@@ -1,24 +1,28 @@
 /* FIXME: file header */
 
+#ifndef THREADS_FIXED_POINT_H
+#define THREADS_FIXED_POINT_H
+
 #define FRACTION_BITS 14
 
-static typedef struct {
+typedef struct {
   int impl_value;
 } fixed_point;
 
-fixed_point fixed_point_create (int n);
-int fixed_point_truncate (fixed_point x);
-int fixed_point_round (fixed_point x);
+static fixed_point fixed_point_create (int n);
+static int fixed_point_truncate (fixed_point x);
+static int fixed_point_round (fixed_point x);
 
-fixed_point fixed_point_add (fixed_point x, fixed_point y);
-fixed_point fixed_point_add_int (fixed_point x, int n);
-fixed_point fixed_point_subtract (fixed_point x, fixed_point y);
-fixed_point fixed_point_subtract_int (fixed_point x, int n);
+static fixed_point fixed_point_add (fixed_point x, fixed_point y);
+static fixed_point fixed_point_add_int (fixed_point x, int n);
+static fixed_point fixed_point_subtract (fixed_point x, fixed_point y);
+static fixed_point fixed_point_subtract_int (fixed_point x, int n);
 
-fixed_point fixed_point_multiply (fixed_point x, fixed_point y);
-fixed_point fixed_point_multiply_int (fixed_point x, int n);
-fixed_point fixed_point_divide (fixed_point x, fixed_point y);
-fixed_point fixed_point_divide_int (fixed_point x, int n);
+static fixed_point fixed_point_multiply (fixed_point x, fixed_point y);
+static fixed_point fixed_point_multiply_int (fixed_point x, int n);
+static fixed_point fixed_point_divide (fixed_point x, fixed_point y);
+static fixed_point fixed_point_divide_int (fixed_point x, int n);
+static fixed_point fixed_point_ratio (int num, int denom);
 
 /* FIXME: style? */
 static inline fixed_point
@@ -91,4 +95,9 @@ fixed_point_divide_int (fixed_point x, int n) {
   return _fixed_point_from_value (x.impl_value / n);
 }
 
+static inline fixed_point
+fixed_point_ratio (int num, int denom) {
+  return fixed_point_divide_int (fixed_point_create (num), denom);
+}
 
+#endif

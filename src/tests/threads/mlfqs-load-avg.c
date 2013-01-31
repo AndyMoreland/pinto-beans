@@ -127,7 +127,10 @@ test_mlfqs_load_avg (void)
 {
   int i;
   
+  msg("starting test...");
   ASSERT (thread_mlfqs);
+
+  msg("starting test...");
 
   start_time = timer_ticks ();
   msg ("Starting %d load threads...", THREAD_CNT);

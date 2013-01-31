@@ -87,7 +87,7 @@ timer_ticks (void)
 static bool 
 timer_compare_sleeping_threads (const struct list_elem *a,
                                 const struct list_elem *b,
-                                void *aux) 
+                                void *aux UNUSED) 
 {
   if (list_entry (a, struct thread, sleepelem)->sleep_until < 
       list_entry(b, struct thread, sleepelem)->sleep_until)
@@ -119,7 +119,7 @@ timer_sleep (int64_t ticks)
                        timer_compare_sleeping_threads, NULL);
 
   thread_block ();
-  intr_enable ();
+  intr_set_level (old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
