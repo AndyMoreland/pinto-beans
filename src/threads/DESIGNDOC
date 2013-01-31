@@ -20,8 +20,10 @@ Alex Ryan <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-Andrew Moreland: Everything
-Alex Ryan: Everything
+Andrew Moreland: Everything except fixed point 
+Alex Ryan: Everything including fixed point
+
+Aside from that we sat next to eachother and wrote everything on one computer.
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -41,21 +43,56 @@ Alex Ryan: Everything
 >> A2: Briefly describe what happens in a call to timer_sleep(),
 >> including the effects of the timer interrupt handler.
 
+In a call to timer_sleep we block interrupts and then insert the thread into
+our sleeping_threads list. The insertion is done in order to maintain 
+the order of the list. The list is sorted so that the head of the list
+is the thread that needs to wake up soonest. Then, we block.
+
+When a timer interrupt occurs, it checks the head of the sleeping_threads
+list. If it can awake the thread, it thread_unblocks it and then repeats.
+When it finds a thread that needs to sleep for more time, it stop looking
+and calls thread_tick.
+
 >> A3: What steps are taken to minimize the amount of time spent in
 >> the timer interrupt handler?
+
+We maintain the list in sorted order so that the interrupt handler only has a 
+short O(1) operation to do unless there are threads that need waking. If there
+are threads that need waking we only need to iterate forward in the list.
+
 
 ---- SYNCHRONIZATION ----
 
 >> A4: How are race conditions avoided when multiple threads call
 >> timer_sleep() simultaneously?
 
+The primary race condition which we sought to avoid was the possibility
+of contention for the sleeping_threads queue. In order to avoid this
+we block interrupts which, since we are on a single core, prevents
+other threads from calling timer_sleep when we are accessing the list.
+The interrupt handler is also prevented from accessing the list because
+interrupts are disabled.
+
 >> A5: How are race conditions avoided when a timer interrupt occurs
 >> during a call to timer_sleep()?
+
+Timer interrupts can only occur before we have disabled interrupts. 
+We only modify shared state after we have disabled interrupts so
+we are safe from race conditions there. 
 
 ---- RATIONALE ----
 
 >> A6: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
+
+We chose this design because it is simple to implement and fast.
+Also, the majority of the overhead is incurred outside of the 
+interrupt handler -- insertion is O(n) but removal is O(1).
+
+We considered keeping the list unsorted, which would allow faster
+calls to thread_sleep, but this would add overhead in the interrupt
+handler. We decided to optimize for shortening the time spent in the
+interrupt handler.
 
 			 PRIORITY SCHEDULING
 			 ===================
@@ -75,8 +112,19 @@ Alex Ryan: Everything
 >> B3: How do you ensure that the highest priority thread waiting for
 >> a lock, semaphore, or condition variable wakes up first?
 
+A semaphore stores a list of the threads waiting on it. A lock has
+a semaphore, and so transitively has this list. For these two cases
+we iterate over the semaphore's waiting list and find the thread with
+the highest priority whenever we need to wake a thread.
+
+For cond variables we iterate over the semaphores that it holds.
+Each semaphore only has one waiter, so we just find the semaphore
+with the highest priority waiter and sema_up that semaphore.
+
 >> B4: Describe the sequence of events when a call to lock_acquire()
 >> causes a priority donation.  How is nested donation handled?
+
+When we call lock_acquire, we lock_try_acquire.
 
 >> B5: Describe the sequence of events when lock_release() is called
 >> on a lock that a higher-priority thread is waiting for.
