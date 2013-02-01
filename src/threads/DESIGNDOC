@@ -140,7 +140,71 @@ FIXME: TODO
 >> Use ASCII art to diagram a nested donation.  (Alternately, submit a
 >> .png file.)
 
-FIXME: TODO 
+Consider the situation diagrammed below, and explained underneath:
+
+                          Thread3 (1)
+                             ^
+                             |
+                             |           
+                           /   \
+                         /       \
+                  { Lock1    ,    Lock2 }
+                    ^                 ^
+                    |                 |
+                   /                   \
+                 / \                   / \
+      { Thread1a , Thread1b } { Thread2a,Thread2b }
+          (2)        (4)          (3) ^      (6)
+                                       \
+                                   { Lock4 }
+
+There are two locks, Lock1 and Lock2. Both are owned by Thread3,
+represented as an arrow in the dependency graph. There are two threads
+Thread1a and Thread1b waiting on the Lock1 that Thread3 holds; likewise,
+two threads Thread2a and Thread2b are blocked on Lock2. Thread 2a also
+holds some Lock4. "Native" priorities (that is, assigned priorities 
+before any donation) are represented in parentheses.
+
+This information is encoded in lists; each collection inside {} braces
+represent a list owned by its parent node; that is, Thread3 keeps track
+of all locks that it owns, { Lock1, Lock2 }. Lock1 keeps track of
+all threads waiting on it, { Thread1a, Thread1b }. Each node also knows
+its parent (locks know which thread currently owns them; threads know
+which lock, if any, they are blocked on). All of these lists are 
+unsorted.
+
+Now, donated priority is accessible for any thread: a thread's priority
+is calculated separate from its "native" priority and is exactly the max
+of any threads waiting on the locks that it owns. In the diagram above,
+Thread3's actual priority will be max(max(2, 4), max(3, 6)) = 6.
+
+If Thread 3 releases Lock2, it will be acquired by Thread2b. The
+only updating that has to be done is that Lock2 is owned by Thread2b
+(and Thread2b owns Lock 2). We already know that 
+priority(Thread2b) > priority(Thread2a) because it acquired the lock,
+so no priority recalculation has to be done for either of those two
+threads. However, we must recalculate Thread 3's priority because it
+no longer owns the high-priority Lock2. This is accomplished by just
+iterating as in the previous paragraph (foreach owned lock, foreach 
+blocked thread, take the maximum). The result is max(2,4) = 4.
+
+In the other interesting case in the diagram above, say a high-priority 
+Thread4 tries to acquire Lock4. It must now recursively climb up the 
+dependency graph, donating priority to Thread2a, and finally to Thread3.
+If at any point this recursion meets a parent of at least equal priority,
+the recursion stops as all subsequent parents are already high-priority.
+
+
+
+// not used, but i made it, so it'll sit here until we kill it
+Thread 1a <--.
+             |-<-- Lock 1 <--|
+Thread 1b <--.               |
+                             |-<-- Thread 3
+Thread 2a <--.               |
+             |-<-- Lock 2 <--|
+Thread 2b <--.
+
 
 ---- ALGORITHMS ----
 
@@ -180,7 +244,36 @@ FIXME: todo
 >> B7: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
 
-FIXME: todo
+One of our main goals with the design was the easy recomputation of
+donated priorities; in the case of a lock changing hands, the thread
+that released the lock very likely might lose priority. We need some
+mechanism to calculate the lowered priority, which we accomplished by
+providing access to all dependant threads (that is, threads that are
+waiting on locks held by the thread in question).
+
+One simple solution would be for a thread to directly keep track of *all*
+dependant threads (recursively). However, the tree structure optimizes
+over this naive solution as a parent's priority is always at least as 
+big as any children (and we are interested in calculating the max).
+
+But a thread keeping track of dependant children threads is 
+clunky when a lock changes hands; if n threads are all waiting on a 
+single lock L held by T, then T releases and thread S acquires L, 
+the other n-1 have to cut themselves out of the children list of T and 
+add themselves to the children list of S. This is an O(n) operation, so 
+the successive acquisition of the lock by all n threads takes O(n^2) time.
+
+By keeping track of dependant threads per-lock, this scenario translates
+to simply removing the lock L from T's list and adding it to S's (as well
+as a pointer reassignment). This is O(1).
+
+// FIXME: I wrote this but i'm dumb
+this is O(k) where k is the size of S's
+held lock list, which in a typical system should be _much_ smaller than
+the number of threads waiting on a lock (that is, k << n). [It seems 
+that most feasible systems would not require the acquisition of a heinous 
+number of locks at the same time by a single thread.]
+
 
 			  ADVANCED SCHEDULER
 			  ==================
