@@ -9,7 +9,7 @@
 >> Fill in the names and email addresses of your group members.
 
 Andrew Moreland <andymo@stanford.edu>
-Alex Ryan <email@domain.example>
+Alex Ryan <alexryan@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -52,7 +52,7 @@ PRI_DEFAULT.
 >> more or less than others (e.g. 2x), indicate that here.
 
 Andrew Moreland: Everything except fixed point 
-Alex Ryan: Everything including fixed point
+Alex Ryan: Everything except timer 
 
 Aside from that we sat next to eachother and wrote everything on one computer.
 
@@ -134,9 +134,13 @@ interrupt handler.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+FIXME: TODO
+
 >> B2: Explain the data structure used to track priority donation.
 >> Use ASCII art to diagram a nested donation.  (Alternately, submit a
 >> .png file.)
+
+FIXME: TODO 
 
 ---- ALGORITHMS ----
 
@@ -156,9 +160,12 @@ with the highest priority waiter and sema_up that semaphore.
 >> causes a priority donation.  How is nested donation handled?
 
 When we call lock_acquire, we lock_try_acquire.
+FIXME: todo
 
 >> B5: Describe the sequence of events when lock_release() is called
 >> on a lock that a higher-priority thread is waiting for.
+
+FIXME: todo
 
 ---- SYNCHRONIZATION ----
 
@@ -166,10 +173,14 @@ When we call lock_acquire, we lock_try_acquire.
 >> how your implementation avoids it.  Can you use a lock to avoid
 >> this race?
 
+FIXME: todo
+
 ---- RATIONALE ----
 
 >> B7: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
+
+FIXME: todo
 
 			  ADVANCED SCHEDULER
 			  ==================
@@ -180,6 +191,8 @@ When we call lock_acquire, we lock_try_acquire.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+FIXME: todo
+
 ---- ALGORITHMS ----
 
 >> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
@@ -187,26 +200,54 @@ When we call lock_acquire, we lock_try_acquire.
 >> scheduling decision and the priority and recent_cpu values for each
 >> thread after each given number of timer ticks:
 
+The values in the table below make a few important assumptions:
+- There is a different thread running (say, the 'main' thread)
+before the first tick, and all threads are ready to run
+- The initial load_avg is irrelevant; if all of these threads
+start with a recent_cpu of 0, the initial load_avg calculation
+at tick 0 (which wouldn't change until tick 100) will only be 
+used to multiply recent_cpu during the first recent_cpu 
+recalculation (which starts at 0).
+- there are no other ready threads in the system
+- as discussed in C3, when appropriate, we update the
+load_avg, then recent_cpu, then priority.
+- the calculations below represent the state of the system
+*after* the specified tick
+
 timer  recent_cpu    priority   thread
 ticks   A   B   C   A   B   C   to run
 -----  --  --  --  --  --  --   ------
- 0
- 4
- 8
-12
-16
-20
-24
-28
-32
-36
+ 0      0   1   2  63  60  58      A
+ 4      4   1   2  62  60  58      A      
+ 8      8   1   2  61  60  58      A
+12     12   1   2  60  60  58      B [round-robin]
+16     12   5   2  60  59  58      A 
+20     16   5   2  59  59  58      B [round-robin]
+24     16   9   2  59  58  58      A
+28     20   9   2  58  58  58      C [round-robin]
+32     20   9   6  58  58  57      B [round-robin]
+36     20  13   6  58  57  57      A
 
 >> C3: Did any ambiguities in the scheduler specification make values
 >> in the table uncertain?  If so, what rule did you use to resolve
 >> them?  Does this match the behavior of your scheduler?
 
+Besides the ambiguities discussed above (which would be well-defined
+in a real system) it was not stated the order in which load_average,
+recent_cpu, and priority calculations should be done on one-second
+clock boundaries. It seems to make the most sense to update them
+in that order, as load_average is independent of the others, 
+recent_cpu depends on only load_average, and priority depends in turn
+on recent_cpu.
+
+By updating them in their reverse-dependency order, the resulting
+values should more immediately reflect the "snapshot" of the
+system at that point in time.
+
 >> C4: How is the way you divided the cost of scheduling between code
 >> inside and outside interrupt context likely to affect performance?
+
+FIXME: do this shit
 
 ---- RATIONALE ----
 
@@ -215,12 +256,32 @@ ticks   A   B   C   A   B   C   to run
 >> time to work on this part of the project, how might you choose to
 >> refine or improve your design?
 
+FIXME: wtf did we even design anything?
+
 >> C6: The assignment explains arithmetic for fixed-point math in
 >> detail, but it leaves it open to you to implement it.  Why did you
 >> decide to implement it the way you did?  If you created an
 >> abstraction layer for fixed-point math, that is, an abstract data
 >> type and/or a set of functions or macros to manipulate fixed-point
 >> numbers, why did you do so?  If not, why not?
+
+The first way we implemented it used a fixed_point *struct* that
+contained the underlying int implementation. By wrapping the int
+in a struct, we gain type-safety for all interface methods (that
+is, we can't call fixed_point_add(2, 2) in an attempt to get 4).
+We force the explicit conversion between fixed_point and int.
+This definitely helped our development time, as we definitely
+called the wrong versions of functions (or didn't perform the
+appropriate conversions) which would have been completely horrible
+to debug by hand.
+
+However, in an attempt to lower time spent within the timer
+interrupt, we added a second equivalent implementation that
+simply typedefs int as fixed_point and exports the interface
+as a collection of C macros. This guarantees function inlining
+at the expense of type-safety. The implementations can be swapped through
+a simple FIXED_POINT_INLINE flag. (Unfortunately, this optimization
+did not improve the timing characteristics of the code significantly.)
 
 			   SURVEY QUESTIONS
 			   ================
@@ -260,5 +321,7 @@ to arbitrarily deep donation.
 
 >> Do you have any suggestions for the TAs to more effectively assist
 >> students, either for future quarters or the remaining projects?
+
+Staffing office hours would probably be a good idea.
 
 >> Any other comments?
