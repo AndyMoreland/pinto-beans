@@ -16,6 +16,37 @@ Alex Ryan <email@domain.example>
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
 
+We wrote two versions of our fixed point library. One is implemented using
+a "fixed_point" struct in order to force the compiler to check types and
+prevent us from accidentally mixing int operations with fp operations.
+There is also a library implemented using macros which we tested after
+ensuring that our code type checked properly.
+
+Our code passes all tests when compiled on myth and executed without any opts.
+If -r is used it consistently passes everything.
+Some values of -j will cause failures in the MLPQS tests and in alarm_simultaneous.
+The tests that fail all depend on very specific tick timings of threads being
+awoken, or on the exact values of statistics about threads.
+Since jitter adds a fairly extreme amount of randomness, there are times where
+threads are awoken and then immediately pre-empted, and other such events.
+
+We read the BOCHS patch that added the -j option and noticed that the random
+jitter is uniformly distributed, rather than normally distributed as one would
+expect of real-world randomness in timings. This leads to a high incidence
+of rapid preemptions particularly in the MLFQS tests because the interrupt code
+(although optimized) still is fairly heavy, and it will eat up a large portion
+of time slices that are very short.
+
+Also, the MLFQS section is slightly underspecced as the precise ordering of
+some computation is not stated. We chose to compute load average before
+recent cpu before priority in cases where all three need computing.
+
+Furthermore, the design docs do not specify what to set priority to when
+creating a new thread in the MLFQS scheduler. We are told to ignore the
+priority parameter, but not what to use instead. We have decided to use 
+PRI_DEFAULT.
+
+
 >> Describe briefly which parts of the assignment were implemented by
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
@@ -203,12 +234,29 @@ the quarter.
 >> In your opinion, was this assignment, or any one of the three problems
 >> in it, too easy or too hard?  Did it take too long or too little time?
 
+It would be nice to have a guide to what sorts of tests we could expect to
+fail under jitter. I understand that we are supposed to use critical
+thinking and figure it out, but it is stressful :-).
+
+Also, the threshold for MLFQS_nice_10 is perhaps too tight. We wrote a 
+simulator for mlfqs and we found that depending on very small 
+flunctuations in starting conditions (small delays between starting threads,
+etc.) we were able to produce reasonable outputs that were slightly outside
+of the threshold using non-jitter timings.
+
 >> Did you find that working on a particular part of the assignment gave
 >> you greater insight into some aspect of OS design?
+
+It is interesting that a lot of OS code does not use locks. It would be
+neat to see how this works on a multi-core system.
 
 >> Is there some particular fact or hint we should give students in
 >> future quarters to help them solve the problems?  Conversely, did you
 >> find any of our guidance to be misleading?
+
+I think the notion of limiting the priority donation recursion freaks
+some people out because the natural tree based design scales very well
+to arbitrarily deep donation.
 
 >> Do you have any suggestions for the TAs to more effectively assist
 >> students, either for future quarters or the remaining projects?
