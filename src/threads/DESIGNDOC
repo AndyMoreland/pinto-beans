@@ -70,6 +70,23 @@ Aside from that we sat next to eachother and wrote everything on one computer.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+In timer.c:
+
+static struct list sleeping_threads
+
+We use this static variable to store a list of threads that are currently
+asleep, sorted from soonest to latest wake time.
+
+In Thread.h's struct thread:
+
+    int64_t sleep_until
+    struct list_elem sleepelem
+
+The thread is awoken by the timer interrupt when timer_ticks > sleep_until.
+The thread is stored in a list called sleeping_threads. sleepelem is the 
+element used for this.
+
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe what happens in a call to timer_sleep(),
@@ -135,7 +152,29 @@ interrupt handler.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-FIXME: TODO
+In thread.h's struct thread:
+
+    int native_priority
+    struct lock *blocked_lock
+    struct list locks
+
+
+We use native priority to store the priority-without-donation of the thread.
+We use "blocked_lock" to track which lock the thread is currently block on.
+We use "locks" in order to track which locks we own currently. 
+All of these are used for managing priority donation.
+
+In thread.c:
+static struct list ready_lists[PRI_COUNT]
+
+We redefined ready_list to be an array of ready_lists -- each corresponds
+to a different priority level.
+
+
+In Synch.h's struct lock:
+   struct list_elem elem;
+
+This is a list_element used for membership in a thread's `locks` list.
 
 >> B2: Explain the data structure used to track priority donation.
 >> Use ASCII art to diagram a nested donation.  (Alternately, submit a
@@ -218,7 +257,19 @@ FIXME: explain why we did a list of locks
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-FIXME: todo
+In thread.h's struct thread:
+
+  int nice
+  fixed_point recent_cpu
+
+We use `nice` in order to track the nice level of a thread.
+We use `recent_cpu` in order to track the recent cpu of a thread.
+
+In thread.c:
+
+static fixed_point load_average
+ # finish
+
 
 ---- ALGORITHMS ----
 
