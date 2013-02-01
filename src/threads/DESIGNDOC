@@ -303,7 +303,6 @@ Either way, it would be bad.
 >> B7: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
 
-<<<<<<< HEAD
 One of our main goals with the design was the easy recomputation of
 donated priorities; in the case of a lock changing hands, the thread
 that released the lock very likely might lose priority. We need some
@@ -327,24 +326,6 @@ By keeping track of dependant threads per-lock, this scenario translates
 to simply removing the lock L from T's list and adding it to S's (as well
 as a pointer reassignment). This is O(1).
 
-// FIXME: I wrote this but i'm dumb
-this is O(k) where k is the size of S's
-held lock list, which in a typical system should be _much_ smaller than
-the number of threads waiting on a lock (that is, k << n). [It seems 
-that most feasible systems would not require the acquisition of a heinous 
-number of locks at the same time by a single thread.]
-
-=======
-We designed this way in order to minimize timer interrupt time and optimize
-for a low lock-thread ratio. Since we are caching the max of the natural
-and donated priorities, when the scheduler needs to (in timer interrupt context)
-find the highest priority thread it need only traverse the sorted ready
-lists which have already been fixed in order to take into account the cached
-priorities.
-
-FIXME: explain why we did a list of locks
->>>>>>> origin/tmep
-
 			  ADVANCED SCHEDULER
 			  ==================
 
@@ -365,7 +346,19 @@ We use `recent_cpu` in order to track the recent cpu of a thread.
 In thread.c:
 
 static fixed_point load_average
- # finish
+
+We store a thread.c-global variable that represent's the system's 
+current load average.
+
+All of these values are used for MLFQS computation.
+
+In fixed-point.h: 
+
+typedef struct { int impl_value; } fixed_point
+
+We defined a wrapper struct type for fixed-point computation.
+We used a struct in order to make the compiler type-check our math.
+We also provide a macro implementation that uses no struct.
 
 
 ---- ALGORITHMS ----
@@ -455,8 +448,6 @@ with low overheard.
 >> time to work on this part of the project, how might you choose to
 >> refine or improve your design?
 
-FIXME: review this
-
 We designed our MLFQS scheduler somewhat naively. We wrote it in a
 way that allowed us to easily shoehorn it on top of the code 
 that we wrote for the regular priority scheduler.
@@ -467,20 +458,17 @@ There are certain optimizations that could make things faster.
 For instance, we could track the tick when we last scheduled a given
 thread. Then, instead of using expensive fixed point operations
 in order to compute statistics for threads that have not been scheduled
-recently, we could simply have set recent_cpu to 0 and made other similar
+recently, we could simply have set recent_cpu to `nice` and made other similar
 decisions.
 
-We also perform some needless work when we decide whether or not we need
-to yield to higher priority threads. We could optimize slightly and store
-a reference to the current highest priority thread, and then looking
-to see if we need to yield would only be O(1). This requires maintenance
-of state, though, which is often the source of confusing bugs.
+We avoided making these optimizations both because they are complicated
+and because they could potentially cause us to fail the very specifically
+designed tests for this project.
 
 If we had more time to work on advanced scheduling it would be interesting
 to explore priority donation for synchronization constructs, and in general
 to find ways to avoid having to do expensive computations when they are
 provably unhelpful.
-
 
 >> C6: The assignment explains arithmetic for fixed-point math in
 >> detail, but it leaves it open to you to implement it.  Why did you
@@ -545,7 +533,5 @@ to arbitrarily deep donation.
 
 >> Do you have any suggestions for the TAs to more effectively assist
 >> students, either for future quarters or the remaining projects?
-
-Staffing office hours would probably be a good idea.
 
 >> Any other comments?

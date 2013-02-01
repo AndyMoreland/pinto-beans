@@ -163,7 +163,16 @@ thread_tick (void)
           thread_foreach (thread_mlfqs_update_recent_cpu, NULL);
         }
       if (timer_ticks () % MLFQS_PRI_RECOMPUTE_TICKS == 0)
-        thread_foreach (thread_mlfqs_update_priority, NULL);
+        { 
+          thread_foreach (thread_mlfqs_update_priority, NULL);
+          /* If we recaculate priorities on a tick which is not a
+             time slice boundary, then we still want to preempt
+             if we have raised another thread's priority over our
+             current thread. */
+          if (find_next_thread_to_run ()->priority > t->priority)
+            intr_yield_on_return ();
+        }
+
 
       intr_set_level (old_level);
     }
@@ -609,7 +618,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -646,6 +655,8 @@ init_thread (struct thread *t, const char *name, int priority, int nice, fixed_p
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
+  if(thread_mlfqs)
+    priority = PRI_DEFAULT;
   t->priority = priority;
   t->native_priority = priority;
   t->nice = nice;
