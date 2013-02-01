@@ -217,6 +217,7 @@ Now, donated priority is accessible for any thread: a thread's priority
 is calculated separate from its "native" priority and is exactly the max
 of any threads waiting on the locks that it owns. In the diagram above,
 Thread3's actual priority will be max(max(2, 4), max(3, 6)) = 6.
+We cache this value on the thread.
 
 If Thread 3 releases Lock2, it will be acquired by Thread2b. The
 only updating that has to be done is that Lock2 is owned by Thread2b
@@ -233,17 +234,6 @@ Thread4 tries to acquire Lock4. It must now recursively climb up the
 dependency graph, donating priority to Thread2a, and finally to Thread3.
 If at any point this recursion meets a parent of at least equal priority,
 the recursion stops as all subsequent parents are already high-priority.
-
-
-
-// not used, but i made it, so it'll sit here until we kill it
-Thread 1a <--.
-             |-<-- Lock 1 <--|
-Thread 1b <--.               |
-                             |-<-- Thread 3
-Thread 2a <--.               |
-             |-<-- Lock 2 <--|
-Thread 2b <--.
 
 
 ---- ALGORITHMS ----
@@ -263,13 +253,40 @@ with the highest priority waiter and sema_up that semaphore.
 >> B4: Describe the sequence of events when a call to lock_acquire()
 >> causes a priority donation.  How is nested donation handled?
 
-When we call lock_acquire, we lock_try_acquire.
-FIXME: todo
+When we call lock_acquire, we lock_try_acquire. If this succeeds then
+we do not need to donate any priority to anything as we already have
+the lock and are not blocked.
+
+If, on the other hand, this fails, then we need to donate priority
+to the holder of the lock. We do this by adding ourself to the lock's
+semaphore's waiter list and then recursively traversing the dependency
+graph through the owner of the lock and any threads who it is depending
+on. We only raise priorities during this traversal, terminating if
+at any point we hit a thread whose priority is equal or higher to
+our own as we know that all following threads will have the same
+property.
+
+This takes care of nested donation.
+
+These operations all take place with interrupts off in order to avoid
+complicated race conditions.
+
+Once we get the lock we add it to our "owned locks" list while 
+interrupts are off.
 
 >> B5: Describe the sequence of events when lock_release() is called
 >> on a lock that a higher-priority thread is waiting for.
+With interrupts off:
 
-FIXME: todo
+When lock_release is called we first remove the lock from our
+"owned_locks" list. Then, we iterate over the remaining locks in
+our "owned_locks" list in order to figure out if we are still
+having priority donated to us. We update our priority appropriately
+either to the max of our natural priority and the max of any
+dependant threads' priorities.
+
+Then, we iterate over the lock's semaphore's waiters list and find the
+thread with the highest cached priority. We unblock this thread.
 
 ---- SYNCHRONIZATION ----
 
