@@ -28,7 +28,8 @@ Some values of -j will cause failures in the MLPQS tests and in alarm_simultaneo
 The tests that fail all depend on very specific tick timings of threads being
 awoken, or on the exact values of statistics about threads.
 Since jitter adds a fairly extreme amount of randomness, there are times where
-threads are awoken and then immediately pre-empted, and other such events.
+threads are awoken and then immediately pre-empted, and other such events
+which will throw off these tests.
 
 We read the BOCHS patch that added the -j option and noticed that the random
 jitter is uniformly distributed, rather than normally distributed as one would
@@ -173,14 +174,40 @@ FIXME: todo
 >> how your implementation avoids it.  Can you use a lock to avoid
 >> this race?
 
-FIXME: todo
+If we set a thread's priority and then are interrupted we could potentially
+have left the ready lists in an inconsistent state. For instance, if the thread
+was decreasing its own priority we might accidentally schedule it over
+a higher priority thread.
+
+We avoid this problem by disabling interrupts in the set_priority function.
+
+We could kind of use a lock to avoid the race. We could lock the thread 
+struct before modifications were made. However, we need to access the data
+in timer interrupts in order to get the priority of the thread. We are
+not allowed to truly acquire the lock in the timer interrupt as this could
+block the interrupt and cause terrible, terrible problems. So, we could
+*try*_acquire the lock. 
+
+However, if we failed to acquire the lock our
+only recourse would be to ignore the thread or not to schedule a new thread.
+This is potentially exploitable by client threads -- they could predict when
+they will be interrupted and initiate a priority change in order to block
+the scheduler from pre-empting them. Or this behavior could happen on accident.
+Either way, it would be bad.
 
 ---- RATIONALE ----
 
 >> B7: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
 
-FIXME: todo
+We designed this way in order to minimize timer interrupt time and optimize
+for a low lock-thread ratio. Since we are caching the max of the natural
+and donated priorities, when the scheduler needs to (in timer interrupt context)
+find the highest priority thread it need only traverse the sorted ready
+lists which have already been fixed in order to take into account the cached
+priorities.
+
+FIXME: explain why we did a list of locks
 
 			  ADVANCED SCHEDULER
 			  ==================
@@ -244,10 +271,34 @@ By updating them in their reverse-dependency order, the resulting
 values should more immediately reflect the "snapshot" of the
 system at that point in time.
 
+This is the order that we adopted in our scheduler.
+
 >> C4: How is the way you divided the cost of scheduling between code
 >> inside and outside interrupt context likely to affect performance?
 
-FIXME: do this shit
+As we have discussed before, we minimize the interrupt context
+overhead for waking threads from sleep.
+
+For the MLFQS scheduler we perform all statistical calculations 
+within interrupt context (with the exception of recomputing a
+single thread's priority when its nice value changes).
+
+This is the only way that we saw to divide the work because
+the computations must be carried out (according to spec) on
+very specific timing frequencies and no kernel thread (or user thread)
+is allowed to execute in between a tick and their computation.
+
+However, computing the statistics could be fairly expensive on a loaded
+system. We have one O(read_threads) operation and two O(threads)
+operations with lots of non-trivial fixed-point computations.
+
+In a heavily loaded system it is possible that this timer interrupt
+scheduling overhead could cause time slices to be unreasonable short.
+
+For non-MLFQS scheduling we only require the timer interrupt handler
+to search sorted queues for the first entry. This is a very fast op
+with low overheard.
+
 
 ---- RATIONALE ----
 
@@ -256,7 +307,32 @@ FIXME: do this shit
 >> time to work on this part of the project, how might you choose to
 >> refine or improve your design?
 
-FIXME: wtf did we even design anything?
+FIXME: review this
+
+We designed our MLFQS scheduler somewhat naively. We wrote it in a
+way that allowed us to easily shoehorn it on top of the code 
+that we wrote for the regular priority scheduler.
+
+We chose to compute statistics for every thread when we were told.
+There are certain optimizations that could make things faster.
+
+For instance, we could track the tick when we last scheduled a given
+thread. Then, instead of using expensive fixed point operations
+in order to compute statistics for threads that have not been scheduled
+recently, we could simply have set recent_cpu to 0 and made other similar
+decisions.
+
+We also perform some needless work when we decide whether or not we need
+to yield to higher priority threads. We could optimize slightly and store
+a reference to the current highest priority thread, and then looking
+to see if we need to yield would only be O(1). This requires maintenance
+of state, though, which is often the source of confusing bugs.
+
+If we had more time to work on advanced scheduling it would be interesting
+to explore priority donation for synchronization constructs, and in general
+to find ways to avoid having to do expensive computations when they are
+provably unhelpful.
+
 
 >> C6: The assignment explains arithmetic for fixed-point math in
 >> detail, but it leaves it open to you to implement it.  Why did you
