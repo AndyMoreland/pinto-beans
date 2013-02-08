@@ -255,7 +255,8 @@ void thread_donate_priority_to_thread (struct thread *a, struct thread *b)
     return;
 
   struct thread *cursor;
-  // FIXME shit code
+  /* This `gnarly` for loop just iterates up the tree structure
+     for priority donation discussed in the ascii art of DESIGNDOC */
   for (cursor = b; cursor != NULL && a->priority > cursor->priority; 
        cursor = cursor->blocked_lock? cursor->blocked_lock->holder : NULL) {
     thread_change_priority (cursor, a->priority);

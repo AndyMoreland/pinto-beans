@@ -475,8 +475,8 @@ There are certain optimizations that could make things faster.
 For instance, we could track the tick when we last scheduled a given
 thread. Then, instead of using expensive fixed point operations
 in order to compute statistics for threads that have not been scheduled
-recently, we could simply have set recent_cpu to `nice` and made other similar
-decisions.
+recently, we could simply have set recent_cpu to `nice` and made other
+similar decisions.
 
 We avoided making these optimizations both because they are complicated
 and because they could potentially cause us to fail the very specifically

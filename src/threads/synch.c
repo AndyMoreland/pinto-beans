@@ -326,7 +326,9 @@ lock_release (struct lock *lock)
   list_remove (&lock->elem);
 
   /* Potentially undo priority donation to this thread */
-  thread_update_actual_priority (lock->holder);
+  if (!thread_mlfqs)
+    thread_update_actual_priority (lock->holder);
+
   lock->holder = NULL;
   sema_up (&lock->semaphore);
   

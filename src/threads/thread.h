@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+/* Uncommenting this line uses the macro version of the fixed point
+   library. It is not type safe */
 //#define FIXED_POINT_INLINE
 #include "fixed-point.h"
 
