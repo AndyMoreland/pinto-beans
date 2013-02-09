@@ -15,6 +15,15 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED) 
 {
-  printf ("system call!\n");
+  printf ("[syscall_handler] system call!\n");
+  printf ("[syscall_handler] we think the number is: %d", *(int *)(f->esp));
   thread_exit ();
+}
+
+
+int 
+write (int fd, const void *buffer, unsigned size)
+{
+  printf("woo\n");
+  return;
 }

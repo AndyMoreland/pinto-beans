@@ -19,38 +19,74 @@
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *file_name, int argc, char **argv, 
+                  void (**eip) (void), void **esp);
+static char **parse_words (char *cmdline, int *argc);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *cmdline) 
 {
-  char *fn_copy;
+  char *cmdline_copy;
   tid_t tid;
+
+  /* We require that a cmdline input be at most the size of a page. */
+  // FIXME: will still overflow if we have lots of args -- 4 additional
+  // per arg.
+  if (strlen (cmdline) > PGSIZE)
+    return TID_ERROR;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  cmdline_copy = palloc_get_page (0);
+  if (cmdline_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  
+  strlcpy (cmdline_copy, cmdline, PGSIZE);
+  
+  printf("[process_execute] cmdline_copy: %s \n", cmdline_copy);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (cmdline_copy, PRI_DEFAULT, start_process, cmdline_copy);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    {
+      printf ("[process_execute] freeing page\n");
+      palloc_free_page (cmdline_copy); 
+    }
   return tid;
+}
+
+char **
+parse_words (char *cmdline, int *argc) {
+  char **end_of_tokens = (char **)(cmdline + strlen (cmdline) + 1);
+  char *word;
+  char *context;
+
+  for (word = strtok_r (cmdline, " ", &context); word;
+       word = strtok_r (NULL, " ", &context)) {
+    printf("[parse_words] Parsing word: %s\n", word);
+    end_of_tokens[*argc] = word;
+    (*argc)++;
+  }
+
+  return end_of_tokens;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *cmdline)
 {
-  char *file_name = file_name_;
+  int argc = 0;
+  char **argv = parse_words(cmdline, &argc);
+  char *file_name = argv[0];
+  printf("[start_process] file_name: %s\n", argv[0]);
+  int i;
+  for(i = 0; i < argc; i++)
+    printf("[start_process] printing word '%d': '%s', \n", i, argv[i]);
   struct intr_frame if_;
   bool success;
 
@@ -59,12 +95,16 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load (file_name, argc, argv, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  printf("[start_process] freeing cmdline page\n");
+  palloc_free_page (cmdline);
   if (!success) 
-    thread_exit ();
+    {
+      printf ("[start_process] failed to load, exiting thread.\n");
+      thread_exit ();
+    }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -88,6 +128,10 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while (1 == 1) 
+    { 
+      // FIXME: do this right do nothing 
+    }
   return -1;
 }
 
@@ -195,7 +239,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack_with_args (void **esp, int argc, char *argv[]);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -205,9 +249,11 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
-bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+static bool 
+load (const char *file_name, int argc, char **argv,
+      void (**eip) (void), void **esp) 
 {
+  printf("[load] Entering load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -222,13 +268,16 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  printf("[load] loading file_name: '%s'\n", file_name);
   file = filesys_open (file_name);
-  if (file == NULL) 
+  printf("[load] succeeded in opening file\n");
+  if (file == NULL)
     {
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
 
+  printf("[load] reading header\n");
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -241,11 +290,13 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
-
+  
+  printf("[load] entering for loop\n");
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
+      printf("[load] in for loop\n");
       struct Elf32_Phdr phdr;
 
       if (file_ofs < 0 || file_ofs > file_length (file))
@@ -301,10 +352,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
         }
     }
 
+  printf("[load] Setting up stack for thread %p\n", thread_current ());
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack_with_args (esp, argc, argv))
     goto done;
-
+  
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
@@ -383,6 +435,7 @@ static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
+  printf("[load_segment] entering with file: %p\n", file);
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
@@ -427,17 +480,64 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack_with_args (void **esp, int argc, char *argv[])
 {
+  printf("[setup_stack_with_args] entering\n");
+  int i;
+  for(i = 0; i < argc; i++)
+    printf("[setup_stack_with_args] printing word: '%d' out of '%d': '%s'\n", i, argc, argv[i]);
   uint8_t *kpage;
   bool success = false;
+  char *string_locations[argc];
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  printf("[setup_stack_with_args] Got page %p \n", kpage);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
+      printf("[setup_stack_with_args] installed page for thread %p\n", thread_current ());
+      if (success) 
+        {
+          *esp = PHYS_BASE;
+          printf("[setup_stack_with_args] Storing arguments on stack\n");
+          int i;
+          for (i = argc - 1; i >= 0; i--)
+            {
+              /* Store the arguments on the stack */
+              printf("[setup_stack_with_args] Storing argument %i, '%s' on stack.\n", i, argv[i]);
+              *esp -= strlen (argv[i]) + 1;
+              string_locations[i] = *esp;
+              memcpy (*esp, argv[i], strlen (argv[i]) + 1);
+            }
+          /* Alignment padding and argv[argc] = 0 */
+          // FIXME: zero these out
+          *esp -= (size_t) *esp % 4;
+          *esp -= sizeof (char *);
+          
+          for (i = argc - 1; i >= 0; i--) 
+            {
+              /* Store pointers to arguments */
+              printf("[setup_stack_with_args] Storing point to arg %i, '%s' on stack.\n", i, string_locations[i]);
+              *esp -= sizeof (char *);
+              memcpy (*esp, &string_locations[i], sizeof (char *)); 
+            }
+
+          /* Store argv pointer */
+          void *tmp = *esp;
+          *esp -= sizeof (char **);
+          memcpy (*esp, &tmp, sizeof (char *));
+
+          /* Store argc */
+          *esp -= sizeof (int);
+          memcpy (*esp, &argc, sizeof (int));
+          
+          printf("[setup_stack_with_args] stored argc: %d\n", *(int *)*esp);
+          
+          // FIXME: zero this out
+          /* Make space for return address */
+          *esp -= sizeof (void *);
+
+        }
       else
         palloc_free_page (kpage);
     }
