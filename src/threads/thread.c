@@ -332,6 +332,13 @@ thread_tid (void)
   return thread_current ()->tid;
 }
 
+void
+thread_exit_with_message (int exit_code) 
+{
+  printf ("%s: exit(%d)\n", thread_current ()->name, exit_code);
+  thread_exit ();
+}
+
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void

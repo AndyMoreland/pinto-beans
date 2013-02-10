@@ -47,13 +47,12 @@ process_execute (const char *cmdline)
   
   strlcpy (cmdline_copy, cmdline, PGSIZE);
   
-  printf("[process_execute] cmdline_copy: %s \n", cmdline_copy);
-
   /* Create a new thread to execute FILE_NAME. */
+  /* FIXME: thread name needs to be filename, not cmdline */
   tid = thread_create (cmdline_copy, PRI_DEFAULT, start_process, cmdline_copy);
   if (tid == TID_ERROR)
     {
-      printf ("[process_execute] freeing page\n");
+      // printf ("[process_execute] freeing page\n");
       palloc_free_page (cmdline_copy); 
     }
   return tid;
@@ -67,7 +66,7 @@ parse_words (char *cmdline, int *argc) {
 
   for (word = strtok_r (cmdline, " ", &context); word;
        word = strtok_r (NULL, " ", &context)) {
-    printf("[parse_words] Parsing word: %s\n", word);
+    //printf("[parse_words] Parsing word: %s\n", word);
     end_of_tokens[*argc] = word;
     (*argc)++;
   }
@@ -83,10 +82,7 @@ start_process (void *cmdline)
   int argc = 0;
   char **argv = parse_words(cmdline, &argc);
   char *file_name = argv[0];
-  printf("[start_process] file_name: %s\n", argv[0]);
-  int i;
-  for(i = 0; i < argc; i++)
-    printf("[start_process] printing word '%d': '%s', \n", i, argv[i]);
+  // printf("[start_process] file_name: %s\n", argv[0]);
   struct intr_frame if_;
   bool success;
 
@@ -98,11 +94,11 @@ start_process (void *cmdline)
   success = load (file_name, argc, argv, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  printf("[start_process] freeing cmdline page\n");
+  // printf("[start_process] freeing cmdline page\n");
   palloc_free_page (cmdline);
   if (!success) 
     {
-      printf ("[start_process] failed to load, exiting thread.\n");
+      // printf ("[start_process] failed to load, exiting thread.\n");
       thread_exit ();
     }
 
@@ -183,7 +179,7 @@ process_activate (void)
 typedef uint32_t Elf32_Word, Elf32_Addr, Elf32_Off;
 typedef uint16_t Elf32_Half;
 
-/* For use with ELF types in printf(). */
+/* For use with ELF types in // printf(). */
 #define PE32Wx PRIx32   /* Print Elf32_Word in hexadecimal. */
 #define PE32Ax PRIx32   /* Print Elf32_Addr in hexadecimal. */
 #define PE32Ox PRIx32   /* Print Elf32_Off in hexadecimal. */
@@ -253,7 +249,7 @@ static bool
 load (const char *file_name, int argc, char **argv,
       void (**eip) (void), void **esp) 
 {
-  printf("[load] Entering load\n");
+  // printf("[load] Entering load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -268,16 +264,16 @@ load (const char *file_name, int argc, char **argv,
   process_activate ();
 
   /* Open executable file. */
-  printf("[load] loading file_name: '%s'\n", file_name);
+  // printf("[load] loading file_name: '%s'\n", file_name);
   file = filesys_open (file_name);
-  printf("[load] succeeded in opening file\n");
+  // printf("[load] succeeded in opening file\n");
   if (file == NULL)
     {
-      printf ("load: %s: open failed\n", file_name);
+      // printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
 
-  printf("[load] reading header\n");
+  // printf("[load] reading header\n");
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -287,16 +283,16 @@ load (const char *file_name, int argc, char **argv,
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024) 
     {
-      printf ("load: %s: error loading executable\n", file_name);
+      // printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
   
-  printf("[load] entering for loop\n");
+  // printf("[load] entering for loop\n");
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
-      printf("[load] in for loop\n");
+      // printf("[load] in for loop\n");
       struct Elf32_Phdr phdr;
 
       if (file_ofs < 0 || file_ofs > file_length (file))
@@ -352,7 +348,7 @@ load (const char *file_name, int argc, char **argv,
         }
     }
 
-  printf("[load] Setting up stack for thread %p\n", thread_current ());
+  // printf("[load] Setting up stack for thread %p\n", thread_current ());
   /* Set up stack. */
   if (!setup_stack_with_args (esp, argc, argv))
     goto done;
@@ -435,7 +431,7 @@ static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
-  printf("[load_segment] entering with file: %p\n", file);
+  // printf("[load_segment] entering with file: %p\n", file);
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
@@ -482,29 +478,26 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack_with_args (void **esp, int argc, char *argv[])
 {
-  printf("[setup_stack_with_args] entering\n");
-  int i;
-  for(i = 0; i < argc; i++)
-    printf("[setup_stack_with_args] printing word: '%d' out of '%d': '%s'\n", i, argc, argv[i]);
+  // printf("[setup_stack_with_args] entering\n");
   uint8_t *kpage;
   bool success = false;
   char *string_locations[argc];
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  printf("[setup_stack_with_args] Got page %p \n", kpage);
+  // printf("[setup_stack_with_args] Got page %p \n", kpage);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      printf("[setup_stack_with_args] installed page for thread %p\n", thread_current ());
+      // printf("[setup_stack_with_args] installed page for thread %p\n", thread_current ());
       if (success) 
         {
           *esp = PHYS_BASE;
-          printf("[setup_stack_with_args] Storing arguments on stack\n");
+          // printf("[setup_stack_with_args] Storing arguments on stack\n");
           int i;
           for (i = argc - 1; i >= 0; i--)
             {
               /* Store the arguments on the stack */
-              printf("[setup_stack_with_args] Storing argument %i, '%s' on stack.\n", i, argv[i]);
+              // printf("[setup_stack_with_args] Storing argument %i, '%s' on stack.\n", i, argv[i]);
               *esp -= strlen (argv[i]) + 1;
               string_locations[i] = *esp;
               memcpy (*esp, argv[i], strlen (argv[i]) + 1);
@@ -517,7 +510,7 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           for (i = argc - 1; i >= 0; i--) 
             {
               /* Store pointers to arguments */
-              printf("[setup_stack_with_args] Storing point to arg %i, '%s' on stack.\n", i, string_locations[i]);
+              // printf("[setup_stack_with_args] Storing point to arg %i, '%s' on stack.\n", i, string_locations[i]);
               *esp -= sizeof (char *);
               memcpy (*esp, &string_locations[i], sizeof (char *)); 
             }
@@ -531,7 +524,7 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           *esp -= sizeof (int);
           memcpy (*esp, &argc, sizeof (int));
           
-          printf("[setup_stack_with_args] stored argc: %d\n", *(int *)*esp);
+          // printf("[setup_stack_with_args] stored argc: %d\n", *(int *)*esp);
           
           // FIXME: zero this out
           /* Make space for return address */
