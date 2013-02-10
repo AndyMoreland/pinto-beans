@@ -110,6 +110,9 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
     struct list locks;                  /* Locks that are owned by this thread. */
+    
+    /* Used by userprog/syscall.c */
+    struct list file_descriptors;       /* List of files opened by thread. */
 
     /* Owned by timer.c */
     int64_t sleep_until;                /* Tick count to sleep until. */

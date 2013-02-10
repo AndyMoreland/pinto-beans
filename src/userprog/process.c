@@ -23,6 +23,23 @@ static bool load (const char *file_name, int argc, char **argv,
                   void (**eip) (void), void **esp);
 static char **parse_words (char *cmdline, int *argc);
 
+
+static char **
+parse_words (char *cmdline, int *argc) {
+  char **end_of_tokens = (char **)(cmdline + strlen (cmdline) + 1);
+  char *word;
+  char *context;
+
+  for (word = strtok_r (cmdline, " ", &context); word;
+       word = strtok_r (NULL, " ", &context)) {
+    //printf("[parse_words] Parsing word: %s\n", word);
+    end_of_tokens[*argc] = word;
+    (*argc)++;
+  }
+
+  return end_of_tokens;
+}
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -58,21 +75,7 @@ process_execute (const char *cmdline)
   return tid;
 }
 
-char **
-parse_words (char *cmdline, int *argc) {
-  char **end_of_tokens = (char **)(cmdline + strlen (cmdline) + 1);
-  char *word;
-  char *context;
 
-  for (word = strtok_r (cmdline, " ", &context); word;
-       word = strtok_r (NULL, " ", &context)) {
-    //printf("[parse_words] Parsing word: %s\n", word);
-    end_of_tokens[*argc] = word;
-    (*argc)++;
-  }
-
-  return end_of_tokens;
-}
 
 /* A thread function that loads a user process and starts it
    running. */

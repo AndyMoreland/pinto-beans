@@ -5,8 +5,116 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "threads/malloc.h"
+#include "devices/input.h"
+
+#define FIRST_FD_ID 2
+#define FILE_FAILURE -1
 
 static void syscall_handler (struct intr_frame *);
+static void syscall_halt (struct intr_frame *f);
+static void syscall_exit (struct intr_frame *f);
+static void syscall_exec (struct intr_frame *f);
+static void syscall_wait (struct intr_frame *f);
+static void syscall_create (struct intr_frame *f);
+static void syscall_remove (struct intr_frame *f);
+static void syscall_open (struct intr_frame *f);
+static void syscall_filesize (struct intr_frame *f);
+static void syscall_read (struct intr_frame *f);
+static void syscall_write (struct intr_frame *f);
+static void syscall_seek (struct intr_frame *f);
+static void syscall_tell (struct intr_frame *f);
+static void syscall_close (struct intr_frame *f);
+static void syscall_do_close (int fd_id);
+static void syscall_exit_and_cleanup (int code);
+
+struct file_descriptor {
+  struct list_elem elem;
+  struct file *f;
+  int fd_id;
+};
+
+/* Return a new FD ID for the current thread. Starts at FIRST_FD_ID.  */
+static int
+syscall_get_new_fd_id (void)
+{
+  struct thread *t = thread_current ();
+
+  if (!list_empty (&t->file_descriptors))
+      return list_entry (list_begin (&t->file_descriptors), 
+                         struct file_descriptor, elem)->fd_id;
+
+  return FIRST_FD_ID;
+}
+
+/* Get the file descriptor associated with fd_id in the current thread.
+   Returns NULL if none found. */
+static struct file_descriptor *
+syscall_get_fd (int fd_id) 
+{
+  struct thread *t = thread_current ();
+  struct list_elem *e;
+
+  for (e = list_begin (&t->file_descriptors);
+       e != list_end (&t->file_descriptors);
+       e = list_next (e))
+    {
+      struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
+      if (fd->fd_id == fd_id)
+        return fd;
+    }
+
+  return NULL;
+}
+
+/* Get the file associated with the fd_id.
+   Returns NULL if none found. */
+static struct file *
+syscall_get_file (int fd_id) 
+{
+  struct file_descriptor *fd = syscall_get_fd (fd_id);
+  return fd->f;
+}
+
+/* Creates and returns an FD for `name`.
+   Opens file.
+   Inserts into thread's file list.
+   NULL if open failed. */
+static struct file_descriptor *
+syscall_create_fd_for_file (char *name) {
+  struct file *file = filesys_open(name);
+  struct file_descriptor *fd = NULL;
+  struct thread *t = thread_current ();
+
+  if (file != NULL)
+    {
+      fd = calloc (1, sizeof (struct file_descriptor));
+      fd->fd_id = syscall_get_new_fd_id ();
+      fd->f = file;
+      list_push_back (&t->file_descriptors, &fd->elem);
+    }
+
+  return fd;
+}
+
+void
+syscall_exit_and_cleanup (int code) 
+{
+  struct thread *t = thread_current ();
+  struct list_elem *e;
+
+  for (e = list_begin (&t->file_descriptors);
+       e != list_end (&t->file_descriptors);
+       e = list_next (e))
+    {
+      struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
+      syscall_do_close(fd->fd_id);
+    }
+
+  thread_exit_with_message (code);
+}
 
 void
 syscall_init (void) 
@@ -107,42 +215,209 @@ syscall_handler (struct intr_frame *f)
     }
 }
 
+static void
+syscall_create (struct intr_frame *f)
+{
+  char **file;
+  unsigned *initial_size;
 
-void
+  if (!syscall_pointer_to_arg (f, 1, (void **) &file)
+     || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  f->eax = filesys_create (*file, *initial_size);
+}
+
+static void
+syscall_open (struct intr_frame *f) {
+  char **name;
+  struct file_descriptor *fd = NULL;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+  
+  if(*name != NULL)
+    fd = syscall_create_fd_for_file (*name);
+  
+  if (fd != NULL)
+    f->eax = fd->fd_id;
+  else
+    f->eax = FILE_FAILURE;
+}
+
+static void
+syscall_do_close (int fd_id)
+{
+  struct file_descriptor *fd = syscall_get_fd (fd_id);
+  
+  if (fd != NULL)
+    {
+      file_close (fd->f);
+      free(fd);
+    }
+}
+
+static void
+syscall_close (struct intr_frame *f)
+{
+  int *fd_id;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  syscall_do_close(*fd_id);
+}
+
+static void
+syscall_remove (struct intr_frame *f)
+{
+  char **name;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  if (*name != NULL)
+    {
+    if (filesys_remove(*name))
+      f->eax = true;
+    else
+      f->eax = false;
+    }
+}
+
+static void
+syscall_filesize (struct intr_frame *f)
+{
+  int *fd_id;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+  if (fd != NULL)
+    f->eax = file_length (fd->f);
+  else
+    f->eax = FILE_FAILURE;
+}
+
+static void
 syscall_write (struct intr_frame *f)
 {
-  // FIXME: include return value
-  int *fd;
+  int *fd_id;
   void **buffer;
   unsigned *size;
   
-  if(!syscall_pointer_to_arg(f, 1, (void **) &fd)
-     || !syscall_pointer_to_arg(f, 2, (void **) &buffer)
-     || !syscall_pointer_to_arg(f, 3, (void **) &size)
-     || !syscall_verify_pointer_offset(*buffer, *size))
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
+     || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
+     || !syscall_pointer_to_arg (f, 3, (void **) &size)
+     || !syscall_verify_pointer_offset (*buffer, *size))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-  if(*fd == STDOUT_FILENO)
+  if (*fd_id == STDOUT_FILENO)
     {
-      // FIXME: suggested that we might want to break larger buffers
       putbuf(*buffer, *size);
+      f->eax = *size;
     }
   else
     {
-      // FIXME: Do file shit
+      struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+      if (fd != NULL)
+        f->eax = file_write (fd->f, *buffer, *size);
+      else
+        f->eax = FILE_FAILURE;
     }
-    
-  
-  return 0;
 }
 
-void 
+static void
+syscall_read (struct intr_frame *f)
+{
+  int *fd_id;
+  void **buffer;
+  unsigned *size;
+  
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
+     || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
+     || !syscall_pointer_to_arg (f, 3, (void **) &size)
+     || !syscall_verify_pointer_offset (*buffer, *size))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  if (*fd_id == STDIN_FILENO)
+    {
+      unsigned bytes_read = 0;
+
+      while (bytes_read < *size)
+        (*(uint8_t **)buffer)[bytes_read++] = input_getc ();
+
+      f->eax = bytes_read;
+    }
+  else
+    {
+      struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+      if (fd != NULL)
+        f->eax = file_read (fd->f, *buffer, *size);
+      else
+        f->eax = FILE_FAILURE;
+    }
+}
+
+static void
+syscall_seek (struct intr_frame *f)
+{
+  int *fd_id;
+  int *position;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
+      || !syscall_pointer_to_arg (f, 2, (void **) &position))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+  if (fd != NULL)
+    file_seek (fd->f, *position);
+
+}
+
+static void
+syscall_tell (struct intr_frame *f)
+{
+  int *fd_id;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+  if (fd != NULL)
+    f->eax = file_tell (fd->f);
+
+  f->eax = FILE_FAILURE;
+}
+
+static void 
 syscall_exit (struct intr_frame *f)
 {
   int *exit_number;
 
-  if(!syscall_pointer_to_arg(f, 1, (void **) &exit_number))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &exit_number))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
-  thread_exit_with_message (*exit_number);
+  syscall_exit_and_cleanup (*exit_number);
+}
+
+static void
+syscall_halt (struct intr_frame *f)
+{
+}
+
+static void
+syscall_exec (struct intr_frame *f)
+{
+}
+
+static void
+syscall_wait (struct intr_frame *f)
+{
 }
