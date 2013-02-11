@@ -8,6 +8,7 @@
    library. It is not type safe */
 //#define FIXED_POINT_INLINE
 #include "fixed-point.h"
+#include "synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -111,7 +112,6 @@ struct thread
     struct list_elem elem;              /* List element. */
     struct list locks;                  /* Locks that are owned by this thread. */
     
-
     /* Owned by timer.c */
     int64_t sleep_until;                /* Tick count to sleep until. */
     struct list_elem sleepelem;         /* List element for sleeping threads list. */
@@ -124,6 +124,7 @@ struct thread
     int pid;
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
+    int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
     struct list child_processes;
     struct list_elem child_elem;
 #endif
@@ -136,6 +137,9 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+
+/* Used by userprog/process.c and userprog/syscall.c */
+struct lock fs_lock;
 
 void thread_init (void);
 void thread_start (void);

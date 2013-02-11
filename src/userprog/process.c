@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -113,7 +114,6 @@ parse_words (char *cmdline, int *argc) {
 
   for (word = strtok_r (cmdline, " ", &context); word;
        word = strtok_r (NULL, " ", &context)) {
-    //printf("[parse_words] Parsing word: %s\n", word);
     end_of_tokens[*argc] = word;
     (*argc)++;
   }
@@ -202,7 +202,6 @@ start_process (void *aux)
   int argc = 0;
   char **argv = parse_words(init_data->cmdline, &argc);
   char *file_name = argv[0];
-  // printf("[start_process] file_name: %s\n", argv[0]);
   struct intr_frame if_;
   bool success;
 
@@ -246,24 +245,29 @@ start_process (void *aux)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while (1 == 1) 
+  int counter = 0;
+  while (counter < 100000000) 
     { 
-      // FIXME: do this right do nothing 
+      counter++;
     }
   return -1;
 }
 
 /* Free the current process's resources. */
+/* FIXME: should implement syscall_exit_and_cleanup in here */
+/* FIXME: should probably call this from our cleanup? */
 void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  syscall_cleanup_process_data ();
+  
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
-  if (pd != NULL) 
+  if (pd != NULL)
     {
       /* Correct ordering here is crucial.  We must set
          cur->pagedir to NULL before switching page directories,
@@ -301,7 +305,7 @@ process_activate (void)
 typedef uint32_t Elf32_Word, Elf32_Addr, Elf32_Off;
 typedef uint16_t Elf32_Half;
 
-/* For use with ELF types in // printf(). */
+/* For use with ELF types in printf(). */
 #define PE32Wx PRIx32   /* Print Elf32_Word in hexadecimal. */
 #define PE32Ax PRIx32   /* Print Elf32_Addr in hexadecimal. */
 #define PE32Ox PRIx32   /* Print Elf32_Off in hexadecimal. */
@@ -371,7 +375,6 @@ static bool
 load (const char *file_name, int argc, char **argv,
       void (**eip) (void), void **esp) 
 {
-  // printf("[load] Entering load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -386,17 +389,14 @@ load (const char *file_name, int argc, char **argv,
   process_activate ();
 
   /* Open executable file. */
-  // printf("[load] loading file_name: '%s'\n", file_name);
+  lock_acquire (&fs_lock);
   file = filesys_open (file_name);
-  // printf("[load] succeeded in opening file\n");
+  lock_release (&fs_lock);
   if (file == NULL)
-    {
-      // printf ("load: %s: open failed\n", file_name);
       goto done; 
-    }
 
-  // printf("[load] reading header\n");
   /* Read and verify executable header. */
+  lock_acquire (&fs_lock);
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
       || ehdr.e_type != 2
@@ -405,24 +405,27 @@ load (const char *file_name, int argc, char **argv,
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024) 
     {
-      // printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
+  lock_release (&fs_lock);
   
-  // printf("[load] entering for loop\n");
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
-      // printf("[load] in for loop\n");
       struct Elf32_Phdr phdr;
 
+      lock_acquire (&fs_lock);
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
+      lock_release (&fs_lock);
 
+      lock_acquire (&fs_lock);
       if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
         goto done;
+      lock_release (&fs_lock);
+
       file_ofs += sizeof phdr;
       switch (phdr.p_type) 
         {
@@ -469,8 +472,7 @@ load (const char *file_name, int argc, char **argv,
           break;
         }
     }
-
-  // printf("[load] Setting up stack for thread %p\n", thread_current ());
+  
   /* Set up stack. */
   if (!setup_stack_with_args (esp, argc, argv))
     goto done;
@@ -482,7 +484,12 @@ load (const char *file_name, int argc, char **argv,
 
  done:
   /* We arrive here whether the load is successful or not. */
+  if (lock_held_by_current_thread (&fs_lock))
+    lock_release (&fs_lock);
+
+  lock_acquire (&fs_lock);
   file_close (file);
+  lock_release (&fs_lock);
   return success;
 }
 
@@ -553,7 +560,6 @@ static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
-  // printf("[load_segment] entering with file: %p\n", file);
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
@@ -600,26 +606,21 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack_with_args (void **esp, int argc, char *argv[])
 {
-  // printf("[setup_stack_with_args] entering\n");
   uint8_t *kpage;
   bool success = false;
   char *string_locations[argc];
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  // printf("[setup_stack_with_args] Got page %p \n", kpage);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      // printf("[setup_stack_with_args] installed page for thread %p\n", thread_current ());
       if (success) 
         {
           *esp = PHYS_BASE;
-          // printf("[setup_stack_with_args] Storing arguments on stack\n");
           int i;
           for (i = argc - 1; i >= 0; i--)
             {
               /* Store the arguments on the stack */
-              // printf("[setup_stack_with_args] Storing argument %i, '%s' on stack.\n", i, argv[i]);
               *esp -= strlen (argv[i]) + 1;
               string_locations[i] = *esp;
               memcpy (*esp, argv[i], strlen (argv[i]) + 1);
@@ -632,7 +633,6 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           for (i = argc - 1; i >= 0; i--) 
             {
               /* Store pointers to arguments */
-              // printf("[setup_stack_with_args] Storing point to arg %i, '%s' on stack.\n", i, string_locations[i]);
               *esp -= sizeof (char *);
               memcpy (*esp, &string_locations[i], sizeof (char *)); 
             }
@@ -646,7 +646,6 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           *esp -= sizeof (int);
           memcpy (*esp, &argc, sizeof (int));
           
-          // printf("[setup_stack_with_args] stored argc: %d\n", *(int *)*esp);
           
           // FIXME: zero this out
           /* Make space for return address */

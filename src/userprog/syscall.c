@@ -1,6 +1,6 @@
-#include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "userprog/syscall.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -9,6 +9,7 @@
 #include "filesys/file.h"
 #include "threads/malloc.h"
 #include "devices/input.h"
+#include "threads/synch.h"
 
 #include "lib/user/syscall.h"
 
@@ -32,6 +33,9 @@ static void syscall_close (struct intr_frame *f);
 static void syscall_do_close (int fd_id);
 static void syscall_exit_and_cleanup (int code);
 
+static bool syscall_verify_pointer (void *vaddr);
+static bool syscall_verify_pointer_offset (void *vaddr, size_t offset);
+
 struct file_descriptor {
   struct list_elem elem;
   struct file *f;
@@ -45,11 +49,12 @@ syscall_get_new_fd_id (void)
 {
   struct thread *t = thread_current ();
 
-  if (!list_empty (&t->file_descriptors))
-      return list_entry (list_begin (&t->file_descriptors), 
-                         struct file_descriptor, elem)->fd_id;
+  t->highest_fd_id++;
 
-  return FIRST_FD_ID;
+  if (t->highest_fd_id < 2)
+    t->highest_fd_id = 2;
+  
+  return t->highest_fd_id;
 }
 
 /* Get the file descriptor associated with fd_id in the current thread.
@@ -70,15 +75,6 @@ syscall_get_fd (int fd_id)
     }
 
   return NULL;
-}
-
-/* Get the file associated with the fd_id.
-   Returns NULL if none found. */
-static struct file *
-syscall_get_file (int fd_id) 
-{
-  struct file_descriptor *fd = syscall_get_fd (fd_id);
-  return fd->f;
 }
 
 /* Creates and returns an FD for `name`.
@@ -103,19 +99,24 @@ syscall_create_fd_for_file (char *name) {
 }
 
 void
-syscall_exit_and_cleanup (int code) 
+syscall_cleanup_process_data (void)
 {
   struct thread *t = thread_current ();
   struct list_elem *e;
 
   for (e = list_begin (&t->file_descriptors);
        e != list_end (&t->file_descriptors);
-       e = list_next (e))
+       e = list_begin (&t->file_descriptors))
     {
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
+}
 
+/* Used to do more stuff -- now that stuff is done through process_exit. */
+static void
+syscall_exit_and_cleanup (int code) 
+{
   thread_exit_with_message (code);
 }
 
@@ -125,16 +126,21 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+static bool
+syscall_verify_address (void *vaddr)
+{
+  struct thread *t = thread_current ();
+  return is_user_vaddr (vaddr) 
+    && pagedir_get_page (t->pagedir, pg_round_down (vaddr)) != NULL;
+}
+
 /* Verifies that the given pointer points to valid memory */
 static bool
 syscall_verify_pointer (void *vaddr) 
 {
-  struct thread *t = thread_current ();
-
   /* Check if vaddr is within user address space
      and belongs to a mapped page. */
-  return (is_user_vaddr (vaddr) 
-          && pagedir_get_page (t->pagedir, pg_round_down (vaddr)) != NULL);
+  return syscall_verify_address (vaddr) && syscall_verify_pointer_offset (vaddr, sizeof (void *));
 }
 
 /* Verifies that the given pointer offset by `offset` points to a valid
@@ -142,7 +148,7 @@ syscall_verify_pointer (void *vaddr)
 static bool
 syscall_verify_pointer_offset (void *vaddr, size_t offset)
 {
-  return syscall_verify_pointer ((char *) vaddr + offset);
+  return syscall_verify_address ((char *) vaddr + offset);
 }
 
 /* Returns the arg_number'th argument. arg_number = 0 returns int number. */
@@ -151,16 +157,15 @@ syscall_pointer_to_arg(struct intr_frame *f, int arg_number, void **buffer)
 {
   void *pointer = (void *)((char *)f->esp + sizeof (char *) * arg_number);
   *buffer = pointer;
-  return syscall_verify_pointer (pointer)
-    && syscall_verify_pointer_offset (pointer, sizeof (void *));
+  return syscall_verify_pointer (pointer);
 }
 
 static void
 syscall_handler (struct intr_frame *f) 
 {
   int *interrupt_number;
-  if(!syscall_pointer_to_arg(f, 0, (void **) &interrupt_number))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 0, (void **) &interrupt_number))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   switch (*interrupt_number) 
     {
@@ -215,6 +220,9 @@ syscall_handler (struct intr_frame *f)
     case SYS_CLOSE:
       syscall_close (f);
       break;
+    default:
+      syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+      break;
     }
 }
 
@@ -225,10 +233,13 @@ syscall_create (struct intr_frame *f)
   unsigned *initial_size;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &file)
-     || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
+      || !syscall_verify_pointer (*file)
+      || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
-
+  
+  lock_acquire (&fs_lock);
   f->eax = filesys_create (*file, *initial_size);
+  lock_release (&fs_lock);
 }
 
 static void
@@ -236,11 +247,14 @@ syscall_open (struct intr_frame *f) {
   char **name;
   struct file_descriptor *fd = NULL;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &name))
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name)
+      || !syscall_verify_pointer (*name))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
   
-  if(*name != NULL)
+  lock_acquire (&fs_lock);
+  if (*name != NULL)
     fd = syscall_create_fd_for_file (*name);
+  lock_release (&fs_lock);
   
   if (fd != NULL)
     f->eax = fd->fd_id;
@@ -248,15 +262,18 @@ syscall_open (struct intr_frame *f) {
     f->eax = FILE_FAILURE;
 }
 
-static void
+void
 syscall_do_close (int fd_id)
 {
   struct file_descriptor *fd = syscall_get_fd (fd_id);
   
   if (fd != NULL)
     {
+      lock_acquire (&fs_lock);
+      list_remove (&fd->elem);
       file_close (fd->f);
-      free(fd);
+      free (fd);
+      lock_release (&fs_lock);
     }
 }
 
@@ -268,23 +285,21 @@ syscall_close (struct intr_frame *f)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
-  syscall_do_close(*fd_id);
+  syscall_do_close (*fd_id);
 }
 
 static void
 syscall_remove (struct intr_frame *f)
 {
   char **name;
-
   if (!syscall_pointer_to_arg (f, 1, (void **) &name))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   if (*name != NULL)
     {
-    if (filesys_remove(*name))
-      f->eax = true;
-    else
-      f->eax = false;
+      lock_acquire (&fs_lock);
+      f->eax = filesys_remove(*name);
+      lock_release (&fs_lock);
     }
 }
 
@@ -298,10 +313,12 @@ syscall_filesize (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     f->eax = file_length (fd->f);
   else
     f->eax = FILE_FAILURE;
+  lock_release (&fs_lock);
 }
 
 static void
@@ -312,24 +329,26 @@ syscall_write (struct intr_frame *f)
   unsigned *size;
   
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
-     || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
-     || !syscall_pointer_to_arg (f, 3, (void **) &size)
-     || !syscall_verify_pointer_offset (*buffer, *size))
+      || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
+      || !syscall_pointer_to_arg (f, 3, (void **) &size)
+      || !syscall_verify_pointer_offset (*buffer, *size))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   if (*fd_id == STDOUT_FILENO)
     {
-      putbuf(*buffer, *size);
+      putbuf (*buffer, *size);
       f->eax = *size;
     }
   else
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+      lock_acquire (&fs_lock);
       if (fd != NULL)
         f->eax = file_write (fd->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
+      lock_release (&fs_lock);
     }
 }
 
@@ -341,9 +360,9 @@ syscall_read (struct intr_frame *f)
   unsigned *size;
   
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
-     || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
-     || !syscall_pointer_to_arg (f, 3, (void **) &size)
-     || !syscall_verify_pointer_offset (*buffer, *size))
+      || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
+      || !syscall_pointer_to_arg (f, 3, (void **) &size)
+      || !syscall_verify_pointer_offset (*buffer, *size))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   if (*fd_id == STDIN_FILENO)
@@ -359,10 +378,12 @@ syscall_read (struct intr_frame *f)
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+      lock_acquire (&fs_lock);
       if (fd != NULL)
         f->eax = file_read (fd->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
+      lock_release (&fs_lock);
     }
 }
 
@@ -378,9 +399,10 @@ syscall_seek (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     file_seek (fd->f, *position);
-
+  lock_release (&fs_lock);
 }
 
 static void
@@ -392,9 +414,11 @@ syscall_tell (struct intr_frame *f)
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
-
+  
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     f->eax = file_tell (fd->f);
+  lock_release (&fs_lock);
 
   f->eax = FILE_FAILURE;
 }
