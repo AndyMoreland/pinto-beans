@@ -42,11 +42,12 @@ syscall_get_new_fd_id (void)
 {
   struct thread *t = thread_current ();
 
-  if (!list_empty (&t->file_descriptors))
-      return list_entry (list_begin (&t->file_descriptors), 
-                         struct file_descriptor, elem)->fd_id;
+  t->highest_fd_id++;
 
-  return FIRST_FD_ID;
+  if (t->highest_fd_id < 2)
+    t->highest_fd_id = 2;
+  
+  return t->highest_fd_id;
 }
 
 /* Get the file descriptor associated with fd_id in the current thread.

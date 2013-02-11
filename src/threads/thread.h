@@ -113,6 +113,7 @@ struct thread
     
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
+    int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
 
     /* Owned by timer.c */
     int64_t sleep_until;                /* Tick count to sleep until. */

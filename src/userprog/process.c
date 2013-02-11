@@ -135,6 +135,8 @@ process_wait (tid_t child_tid UNUSED)
 }
 
 /* Free the current process's resources. */
+/* FIXME: should implement syscall_exit_and_cleanup in here */
+/* FIXME: should probably call this from our cleanup? */
 void
 process_exit (void)
 {
