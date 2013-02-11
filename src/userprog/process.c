@@ -122,9 +122,10 @@ start_process (void *cmdline)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while (1 == 1) 
+  int counter = 0;
+  while (counter < 100000000) 
     { 
-      // FIXME: do this right do nothing 
+      counter++;
     }
   return -1;
 }
@@ -138,6 +139,8 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  syscall_cleanup_process_data ();
+  
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
