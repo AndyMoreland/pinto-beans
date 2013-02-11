@@ -1,6 +1,6 @@
-#include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "userprog/syscall.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -9,6 +9,7 @@
 #include "filesys/file.h"
 #include "threads/malloc.h"
 #include "devices/input.h"
+#include "threads/synch.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
@@ -225,8 +226,10 @@ syscall_create (struct intr_frame *f)
   if (!syscall_pointer_to_arg (f, 1, (void **) &file)
      || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
-
+  
+  lock_acquire (&fs_lock);
   f->eax = filesys_create (*file, *initial_size);
+  lock_release (&fs_lock);
 }
 
 static void
@@ -237,8 +240,10 @@ syscall_open (struct intr_frame *f) {
   if (!syscall_pointer_to_arg (f, 1, (void **) &name))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
   
+  lock_acquire (&fs_lock);
   if(*name != NULL)
     fd = syscall_create_fd_for_file (*name);
+  lock_release (&fs_lock);
   
   if (fd != NULL)
     f->eax = fd->fd_id;
@@ -253,8 +258,10 @@ syscall_do_close (int fd_id)
   
   if (fd != NULL)
     {
+      lock_acquire (&fs_lock);
       file_close (fd->f);
       free(fd);
+      lock_release (&fs_lock);
     }
 }
 
@@ -266,7 +273,9 @@ syscall_close (struct intr_frame *f)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
+  lock_acquire (&fs_lock);
   syscall_do_close(*fd_id);
+  lock_release (&fs_lock);
 }
 
 static void
@@ -279,10 +288,12 @@ syscall_remove (struct intr_frame *f)
 
   if (*name != NULL)
     {
-    if (filesys_remove(*name))
-      f->eax = true;
-    else
-      f->eax = false;
+      lock_acquire (&fs_lock);
+      if (filesys_remove(*name))
+        f->eax = true;
+      else
+        f->eax = false;
+      lock_release (&fs_lock);
     }
 }
 
@@ -296,10 +307,12 @@ syscall_filesize (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     f->eax = file_length (fd->f);
   else
     f->eax = FILE_FAILURE;
+  lock_release (&fs_lock);
 }
 
 static void
@@ -324,10 +337,12 @@ syscall_write (struct intr_frame *f)
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+      lock_acquire (&fs_lock);
       if (fd != NULL)
         f->eax = file_write (fd->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
+      lock_release (&fs_lock);
     }
 }
 
@@ -357,10 +372,12 @@ syscall_read (struct intr_frame *f)
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+      lock_acquire (&fs_lock);
       if (fd != NULL)
         f->eax = file_read (fd->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
+      lock_release (&fs_lock);
     }
 }
 
@@ -376,9 +393,10 @@ syscall_seek (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     file_seek (fd->f, *position);
-
+  lock_release (&fs_lock);
 }
 
 static void
@@ -390,9 +408,11 @@ syscall_tell (struct intr_frame *f)
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
-
+  
+  lock_acquire (&fs_lock);
   if (fd != NULL)
     f->eax = file_tell (fd->f);
+  lock_release (&fs_lock);
 
   f->eax = FILE_FAILURE;
 }
