@@ -127,10 +127,6 @@ static bool
 syscall_verify_address (void *vaddr)
 {
   struct thread *t = thread_current ();
-  printf("Verifying address: %p\n", vaddr);
-  printf("is_user_vaddr: %d\n", is_user_vaddr (vaddr));
-  if (is_user_vaddr (vaddr))
-    printf("pagedir_get_page: %p\n", pagedir_get_page (t->pagedir, pg_round_down (vaddr)));
   return is_user_vaddr (vaddr) 
     && pagedir_get_page (t->pagedir, pg_round_down (vaddr)) != NULL;
 }
@@ -141,7 +137,6 @@ syscall_verify_pointer (void *vaddr)
 {
   /* Check if vaddr is within user address space
      and belongs to a mapped page. */
-  printf("------ Verifying pointer %p ------\n", vaddr);
   return syscall_verify_address (vaddr) && syscall_verify_pointer_offset (vaddr, sizeof (void *));
 }
 
@@ -150,7 +145,6 @@ syscall_verify_pointer (void *vaddr)
 static bool
 syscall_verify_pointer_offset (void *vaddr, size_t offset)
 {
-  printf("Verifying pointer offset: %p, %d\n", vaddr, offset);
   return syscall_verify_address ((char *) vaddr + offset);
 }
 
@@ -167,12 +161,8 @@ static void
 syscall_handler (struct intr_frame *f) 
 {
   int *interrupt_number;
-  /* FIXME: this doesn't work! */
-  printf("********ESP::::: %p\n", f->esp);
   if (!syscall_pointer_to_arg (f, 0, (void **) &interrupt_number))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
-
-  printf ("Arg was: %d\n", *interrupt_number);
 
   switch (*interrupt_number) 
     {
@@ -228,7 +218,7 @@ syscall_handler (struct intr_frame *f)
       syscall_close (f);
       break;
     default:
-      // syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+      syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
       break;
     }
 }

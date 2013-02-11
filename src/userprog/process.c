@@ -464,7 +464,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
       /* Add the page to the process's address space. */
-      printf("********!!!!! installing page %p at %p\n", kpage, upage);
       if (!install_page (upage, kpage, writable)) 
         {
           palloc_free_page (kpage);
@@ -491,7 +490,6 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
-      printf("******* Installing page %p at ***** %p\n", kpage, ((uint8_t *) PHYS_BASE) - PGSIZE);
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success) 
         {
