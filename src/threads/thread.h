@@ -111,8 +111,6 @@ struct thread
     struct list_elem elem;              /* List element. */
     struct list locks;                  /* Locks that are owned by this thread. */
     
-    /* Used by userprog/syscall.c */
-    struct list file_descriptors;       /* List of files opened by thread. */
 
     /* Owned by timer.c */
     int64_t sleep_until;                /* Tick count to sleep until. */
@@ -121,6 +119,13 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+
+    /* FIXME: `int' instead of `pid_t' */
+    int pid;
+    /* Used by userprog/syscall.c */
+    struct list file_descriptors;       /* List of files opened by thread. */
+    struct list child_processes;
+    struct list_elem child_elem;
 #endif
 
     /* Owned by thread.c. */

@@ -670,7 +670,12 @@ init_thread (struct thread *t, const char *name, int priority, int nice, fixed_p
   t->nice = nice;
   t->recent_cpu = recent_cpu;
   list_init (&t->locks);
+
+#ifdef USERPROG
   list_init (&t->file_descriptors);
+  list_init (&t->child_processes);
+#endif
+
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();

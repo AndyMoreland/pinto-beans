@@ -10,6 +10,8 @@
 #include "threads/malloc.h"
 #include "devices/input.h"
 
+#include "lib/user/syscall.h"
+
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
 
@@ -35,6 +37,7 @@ struct file_descriptor {
   struct file *f;
   int fd_id;
 };
+
 
 /* Return a new FD ID for the current thread. Starts at FIRST_FD_ID.  */
 static int
