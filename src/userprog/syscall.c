@@ -161,11 +161,32 @@ syscall_verify_pointer_offset (void *vaddr, size_t offset)
 
 /* Returns the arg_number'th argument. arg_number = 0 returns int number. */
 static bool
-syscall_pointer_to_arg(struct intr_frame *f, int arg_number, void **buffer)
+syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer)
 {
   void *pointer = (void *)((char *)f->esp + sizeof (char *) * arg_number);
   *buffer = pointer;
   return syscall_verify_pointer (pointer);
+}
+
+static bool
+syscall_verify_string (char *str)
+{
+  struct thread *t = thread_current ();
+
+  char *cursor = str;
+  void *cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+  bool valid = is_user_vaddr (cursor) && cur_page != NULL;
+  
+  while (valid && *cursor != '\0')
+    {
+      if (cursor - (char *) cur_page > 4096)
+        cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+
+      valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
+      cursor++;
+    }
+
+  return valid;
 }
 
 static void
@@ -242,6 +263,7 @@ syscall_create (struct intr_frame *f)
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &file)
       || !syscall_verify_pointer (*file)
+      || !syscall_verify_string (*file)
       || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
   
@@ -256,7 +278,8 @@ syscall_open (struct intr_frame *f) {
   struct file_descriptor *fd = NULL;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &name)
-      || !syscall_verify_pointer (*name))
+      || !syscall_verify_pointer (*name)
+      || !syscall_verify_string (*name))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
   
   lock_acquire (&fs_lock);
@@ -300,7 +323,8 @@ static void
 syscall_remove (struct intr_frame *f)
 {
   char **name;
-  if (!syscall_pointer_to_arg (f, 1, (void **) &name))
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name)
+      || !syscall_verify_string (*name))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
   if (*name != NULL)
@@ -426,9 +450,11 @@ syscall_tell (struct intr_frame *f)
   lock_acquire (&fs_lock);
   if (fd != NULL)
     f->eax = file_tell (fd->f);
+  else
+    f->eax = FILE_FAILURE;
+
   lock_release (&fs_lock);
 
-  f->eax = FILE_FAILURE;
 }
 
 static void 
@@ -451,7 +477,8 @@ static void
 syscall_exec (struct intr_frame *f)
 {
   char **cmdline;
-  if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline))
+  if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline)
+      || !syscall_verify_string (*cmdline))
     syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
 //  printf ("exec: '%s'\n", *cmdline);

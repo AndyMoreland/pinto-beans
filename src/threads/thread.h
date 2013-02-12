@@ -125,7 +125,6 @@ struct thread
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
     int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
-    struct list child_processes;
     struct list_elem child_elem;
     struct list child_processes;
     void *pdata;

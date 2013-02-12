@@ -157,29 +157,6 @@ parse_first_word (char *dst, const char *src, int buflen)
   return c;
 }
 
-/* Finds the first word of 'src' (all characters before the first
-   space or null-terminator) and stores it into 'dst'.
-
-   The result is null-terminated in 'dst'. returns the length of
-   the sequence read, not including the null-terminator. */
-static int 
-parse_first_word (char *dst, const char *src, int buflen)
-{
-  ASSERT (dst && src);
-  ASSERT (buflen > 0);
-
-  int c = 0;
-  int maxlen = buflen - 1;
-  while (c < maxlen && src[c] && src[c] != ' ')
-    {
-      dst[c] = src[c];
-      ++c;
-    }
-
-  dst[c] = 0;
-  return c;
-}
-
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
