@@ -18,11 +18,93 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
+#include "threads/malloc.h"
+
+typedef int pid_t;
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *file_name, int argc, char **argv, 
                   void (**eip) (void), void **esp);
 static char **parse_words (char *cmdline, int *argc);
+
+struct pdata {
+  struct lock monitor;
+  struct semaphore dead_latch;
+  int references;
+  int process_return_val;
+
+  struct thread *process_thread;
+};
+
+static pid_t 
+pdata_get_pid (struct pdata *p)
+{
+  return (int) p;
+}
+
+static struct pdata *
+pdata_from_pid (pid_t pid)
+{
+  return (struct pdata *)pid;
+}
+
+static struct pdata *
+pdata_current (void)
+{
+  return pdata_from_pid (thread_current ()->pid);
+}
+
+static struct pdata *
+pdata_create (struct thread *thread)
+{
+  struct pdata *p = calloc (sizeof (struct pdata), 1);
+  if (!p)
+    return NULL;
+
+  lock_init (&p->monitor);
+  sema_init (&p->dead_latch, 0);
+  p->references = 2;
+  p->process_thread = thread;
+  return p;
+}
+
+static void 
+pdata_release (struct pdata *p)
+{
+  if (!p) 
+    return;
+
+  lock_acquire (&p->monitor);
+  p->references--;
+  bool should_free = (p->references == 0);
+  lock_release (&p->monitor);
+
+  if (should_free) 
+    free (p);
+}
+
+static void pdata_on_exit (struct pdata *p, int retval)
+{
+  p->process_return_val = retval;
+  struct list *children = &p->process_thread->child_processes;
+  while (!list_empty (children))
+    {
+      struct list_elem *e = list_pop_front (children);
+      struct thread *child = list_entry (e, struct thread, child_elem);
+      pdata_release ( pdata_from_pid (child->pid));
+    }
+
+  sema_up (&p->dead_latch);
+  pdata_release (p);
+}
+
+struct process_init_data {
+  char *cmdline;
+  struct pdata *parent;
+  struct semaphore sema;
+};
+  
 
 static char **
 parse_words (char *cmdline, int *argc) {
@@ -37,6 +119,29 @@ parse_words (char *cmdline, int *argc) {
   }
 
   return end_of_tokens;
+}
+
+/* Finds the first word of 'src' (all characters before the first
+   space or null-terminator) and stores it into 'dst'.
+
+   The result is null-terminated in 'dst'. returns the length of
+   the sequence read, not including the null-terminator. */
+static int 
+parse_first_word (char *dst, const char *src, int buflen)
+{
+  ASSERT (dst && src);
+  ASSERT (buflen > 0);
+
+  int c = 0;
+  int maxlen = buflen - 1;
+  while (c < maxlen && src[c] && src[c] != ' ')
+    {
+      dst[c] = src[c];
+      ++c;
+    }
+
+  dst[c] = 0;
+  return c;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -57,18 +162,30 @@ process_execute (const char *cmdline)
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  cmdline_copy = palloc_get_page (0);
-  if (cmdline_copy == NULL)
+ 
+  size_t bufsize = strlen (cmdline) + 1;
+  cmdline_copy = malloc (bufsize);
+  if (!cmdline_copy)
     return TID_ERROR;
   
-  strlcpy (cmdline_copy, cmdline, PGSIZE);
+  strlcpy (cmdline_copy, cmdline, bufsize);
   
   /* Create a new thread to execute FILE_NAME. */
-  /* FIXME: thread name needs to be filename, not cmdline */
-  tid = thread_create (cmdline_copy, PRI_DEFAULT, start_process, cmdline_copy);
+  char process_name[20];
+  parse_first_word (process_name, cmdline, sizeof (process_name));
+
+  struct process_init_data data;
+  data.cmdline = cmdline_copy;
+  data.parent = pdata_current ();
+  sema_init (&data.sema, 0);
+
+  tid = thread_create (process_name, PRI_DEFAULT, start_process, &data);
+  sema_down (&data.sema);
+  
   if (tid == TID_ERROR)
     {
-      palloc_free_page (cmdline_copy); 
+      // printf ("[process_execute] freeing page\n");
+      free (data.cmdline);
     }
   return tid;
 }
@@ -78,10 +195,12 @@ process_execute (const char *cmdline)
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *cmdline)
+start_process (void *aux)
 {
+  struct process_init_data* init_data = (struct process_init_data *)aux;
+
   int argc = 0;
-  char **argv = parse_words(cmdline, &argc);
+  char **argv = parse_words(init_data->cmdline, &argc);
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
@@ -94,9 +213,13 @@ start_process (void *cmdline)
   success = load (file_name, argc, argv, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (cmdline);
+  // printf("[start_process] freeing cmdline page\n");
+  free (init_data->cmdline);
+  init_data->cmdline = NULL; 
   if (!success) 
     {
+      sema_up (&init_data->sema);
+      // printf ("[start_process] failed to load, exiting thread.\n");
       thread_exit ();
     }
 
