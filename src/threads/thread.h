@@ -127,6 +127,9 @@ struct thread
     int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
     struct list child_processes;
     struct list_elem child_elem;
+    struct list child_processes;
+    void *pdata;
+    struct thread *parent_process;
 #endif
 
     /* Owned by thread.c. */
