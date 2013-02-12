@@ -175,15 +175,18 @@ syscall_verify_string (char *str)
 
   char *cursor = str;
   void *cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+  void *previous_page_start = pg_round_down (cursor);
   bool valid = is_user_vaddr (cursor) && cur_page != NULL;
   
   while (valid && *cursor != '\0')
     {
-      if (cursor - (char *) cur_page > 4096)
-        cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
-
-      valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
       cursor++;
+      if ((void *) cursor - previous_page_start >= PGSIZE)
+	{
+          cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+          previous_page_start = cursor;
+	}
+      valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
     }
 
   return valid;
