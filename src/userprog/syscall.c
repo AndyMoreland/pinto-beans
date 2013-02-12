@@ -439,6 +439,7 @@ syscall_halt (struct intr_frame *f)
 static void
 syscall_exec (struct intr_frame *f)
 {
+
 }
 
 static void

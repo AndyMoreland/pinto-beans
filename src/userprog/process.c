@@ -25,9 +25,97 @@ static bool load (const char *file_name, int argc, char **argv,
                   void (**eip) (void), void **esp);
 static int parse_words (char *cmdline, char **argv, int max_argc);
 
+
+struct pdata {
+  struct list_elem elem;
+  int tid;
+  struct lock monitor;
+  struct semaphore dead_latch;
+  int references;
+  int process_return_val;
+};
+
+static struct pdata *
+pdata_remove_tid (struct thread *parent, tid_t tid)
+{
+  if (!parent)
+    return NULL;
+
+  struct list_elem *e;
+  struct list *children = &parent->child_processes;
+  for (e = list_begin (children); e != list_end (children);
+       e = list_next (e))
+    {
+      struct pdata *child = list_entry (e, struct pdata, elem);
+      if (child->tid == tid)
+        {
+          list_remove (e);
+          return child;
+        }
+    }
+
+  return NULL;
+}
+
+static struct pdata *
+pdata_current (void)
+{
+  return (struct pdata *)thread_current ()->pdata;
+}
+
+static struct pdata *
+pdata_create (void)
+{
+  struct pdata *p = malloc (sizeof (struct pdata));
+  if (!p)
+    return NULL;
+  memset (p, 0, sizeof (struct pdata));
+
+  lock_init (&p->monitor);
+  sema_init (&p->dead_latch, 0);
+  p->references = 2;
+  return p;
+}
+
+static void 
+pdata_release (struct pdata *p)
+{
+  if (!p) 
+    return;
+
+  lock_acquire (&p->monitor);
+  p->references--;
+  bool should_free = (p->references == 0);
+  lock_release (&p->monitor);
+
+  if (should_free) 
+    free (p);
+}
+
+static void pdata_on_exit (struct thread *t, int retval)
+{
+  struct pdata *p = (struct pdata *)t->pdata;
+  if (p)
+    p->process_return_val = retval;
+
+  struct list *children = &t->child_processes;
+  while (!list_empty (children))
+    {
+      struct list_elem *e = list_pop_front (children);
+      struct pdata *child = list_entry (e, struct pdata, elem);
+      pdata_release (child);
+    }
+
+  if (p)
+    {
+      sema_up (&p->dead_latch);
+      pdata_release (p);
+    }
+}
+
 struct process_init_data {
   char *cmdline;
-//  struct pdata *parent;
+  struct thread *parent_process;
   struct semaphore sema;
 };
 
@@ -97,7 +185,7 @@ process_execute (const char *cmdline)
 
   struct process_init_data data;
   data.cmdline = cmdline_copy;
-//  data.parent = pdata_current ();
+  data.parent_process = thread_current ();
   sema_init (&data.sema, 0);
 
   tid = thread_create (process_name, PRI_DEFAULT, start_process, &data);
@@ -137,6 +225,20 @@ start_process (void *aux)
   free (init_data->cmdline);
   init_data->cmdline = NULL; 
 
+  if (success)
+    {
+      struct pdata *process_data = pdata_create ();
+      if (!process_data)
+        success = false;
+      else
+        {
+          thread_current ()->pdata = (void *)process_data;
+          thread_current ()->parent_process = init_data->parent_process;
+          list_push_back (&init_data->parent_process->child_processes, &process_data->elem);
+        }
+    }
+        
+
   sema_up (&init_data->sema);
 
   if (!success) 
@@ -164,8 +266,19 @@ start_process (void *aux)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid)
 {
+  if (1) {
+    struct pdata *child = pdata_remove_tid (thread_current (), child_tid);
+    if (!child)
+      return -1;
+
+    sema_down (&child->dead_latch);
+    int retval = child->process_return_val;
+    pdata_release (child);
+    return retval;
+  }
+      
   int counter = 0;
   while (counter < 100000000) 
     { 
@@ -184,7 +297,8 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
+  
+  pdata_on_exit (cur, 0);
   syscall_cleanup_process_data ();
   
   /* Destroy the current process's page directory and switch back

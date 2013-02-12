@@ -675,6 +675,7 @@ init_thread (struct thread *t, const char *name, int priority, int nice, fixed_p
   t->recent_cpu = recent_cpu;
   list_init (&t->locks);
   list_init (&t->file_descriptors);
+  list_init (&t->child_processes);
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
