@@ -18,25 +18,54 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *file_name, int argc, char **argv, 
                   void (**eip) (void), void **esp);
-static char **parse_words (char *cmdline, int *argc);
+static int parse_words (char *cmdline, char **argv, int max_argc);
 
-static char **
-parse_words (char *cmdline, int *argc) {
-  char **end_of_tokens = (char **)(cmdline + strlen (cmdline) + 1);
+struct process_init_data {
+  char *cmdline;
+//  struct pdata *parent;
+  struct semaphore sema;
+};
+
+static int
+parse_words (char *cmdline, char **argv, int max_argc) {
   char *word;
   char *context;
+  int count = 0;
 
-  for (word = strtok_r (cmdline, " ", &context); word;
+  for (word = strtok_r (cmdline, " ", &context); word && count < max_argc;
        word = strtok_r (NULL, " ", &context)) {
-    end_of_tokens[*argc] = word;
-    (*argc)++;
+     argv[count++] = word;
   }
 
-  return end_of_tokens;
+  return count;
+}
+
+/* Finds the first word of 'src' (all characters before the first
+   space or null-terminator) and stores it into 'dst'.
+
+   The result is null-terminated in 'dst'. returns the length of
+   the sequence read, not including the null-terminator. */
+static int 
+parse_first_word (char *dst, const char *src, int buflen)
+{
+  ASSERT (dst && src);
+  ASSERT (buflen > 0);
+
+  int c = 0;
+  int maxlen = buflen - 1;
+  while (c < maxlen && src[c] && src[c] != ' ')
+    {
+      dst[c] = src[c];
+      ++c;
+    }
+
+  dst[c] = 0;
+  return c;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -55,20 +84,28 @@ process_execute (const char *cmdline)
   if (strlen (cmdline) > PGSIZE)
     return TID_ERROR;
 
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
-  cmdline_copy = palloc_get_page (0);
-  if (cmdline_copy == NULL)
+  size_t bufsize = strlen (cmdline) + 1;
+  cmdline_copy = malloc (bufsize);
+  if (!cmdline_copy)
     return TID_ERROR;
   
-  strlcpy (cmdline_copy, cmdline, PGSIZE);
+  strlcpy (cmdline_copy, cmdline, bufsize);
   
   /* Create a new thread to execute FILE_NAME. */
-  /* FIXME: thread name needs to be filename, not cmdline */
-  tid = thread_create (cmdline_copy, PRI_DEFAULT, start_process, cmdline_copy);
+  char process_name[20];
+  parse_first_word (process_name, cmdline, sizeof (process_name));
+
+  struct process_init_data data;
+  data.cmdline = cmdline_copy;
+//  data.parent = pdata_current ();
+  sema_init (&data.sema, 0);
+
+  tid = thread_create (process_name, PRI_DEFAULT, start_process, &data);
+  sema_down (&data.sema);
+  
   if (tid == TID_ERROR)
     {
-      palloc_free_page (cmdline_copy); 
+      free (data.cmdline);
     }
   return tid;
 }
@@ -78,10 +115,13 @@ process_execute (const char *cmdline)
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *cmdline)
+start_process (void *aux)
 {
-  int argc = 0;
-  char **argv = parse_words(cmdline, &argc);
+  struct process_init_data* init_data = (struct process_init_data *)aux;
+
+#define MAX_ARGS 128
+  char *argv[MAX_ARGS];
+  int argc = parse_words (init_data->cmdline, argv, MAX_ARGS);
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
@@ -94,7 +134,11 @@ start_process (void *cmdline)
   success = load (file_name, argc, argv, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (cmdline);
+  free (init_data->cmdline);
+  init_data->cmdline = NULL; 
+
+  sema_up (&init_data->sema);
+
   if (!success) 
     {
       thread_exit ();
@@ -126,6 +170,8 @@ process_wait (tid_t child_tid UNUSED)
   while (counter < 100000000) 
     { 
       counter++;
+      if (counter % 1000 == 0)
+        counter += 2;
     }
   return -1;
 }
