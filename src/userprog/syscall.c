@@ -87,9 +87,12 @@ syscall_create_fd_for_file (char *name) {
   if (file != NULL)
     {
       fd = calloc (1, sizeof (struct file_descriptor));
-      fd->fd_id = syscall_get_new_fd_id ();
-      fd->f = file;
-      list_push_back (&t->file_descriptors, &fd->elem);
+      if (fd != NULL)
+        {
+          fd->fd_id = syscall_get_new_fd_id ();
+          fd->f = file;
+          list_push_back (&t->file_descriptors, &fd->elem);
+        }
     }
 
   return fd;
@@ -145,7 +148,11 @@ syscall_verify_pointer (void *vaddr)
 static bool
 syscall_verify_pointer_offset (void *vaddr, size_t offset)
 {
-  return syscall_verify_address ((char *) vaddr + offset);
+  bool result = true;
+  size_t offset_tmp;
+  for (offset_tmp = PGSIZE; offset_tmp < offset; offset_tmp += PGSIZE)
+    result = result && syscall_verify_address ((char *) vaddr + offset_tmp);
+  return result && syscall_verify_address ((char *) vaddr + offset);
 }
 
 /* Returns the arg_number'th argument. arg_number = 0 returns int number. */
