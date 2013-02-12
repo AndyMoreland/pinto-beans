@@ -11,8 +11,7 @@
 #include "devices/input.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
-
-#include "lib/user/syscall.h"
+#include "devices/shutdown.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
@@ -115,6 +114,10 @@ syscall_cleanup_process_data (void)
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
+
+  lock_acquire (&fs_lock);
+  file_close (t->executable);
+  lock_release (&fs_lock);
 }
 
 /* Used to do more stuff -- now that stuff is done through process_exit. */
@@ -472,8 +475,9 @@ syscall_exit (struct intr_frame *f)
 }
 
 static void
-syscall_halt (struct intr_frame *f)
+syscall_halt (struct intr_frame *f UNUSED)
 {
+  shutdown_power_off ();
 }
 
 static void

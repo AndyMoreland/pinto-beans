@@ -442,8 +442,10 @@ load (const char *file_name, int argc, char **argv,
   if (file == NULL)
       goto done; 
 
+  t->executable = file;
   /* Read and verify executable header. */
   lock_acquire (&fs_lock);
+  file_deny_write (file);
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
       || ehdr.e_type != 2
@@ -534,9 +536,6 @@ load (const char *file_name, int argc, char **argv,
   if (lock_held_by_current_thread (&fs_lock))
     lock_release (&fs_lock);
 
-  lock_acquire (&fs_lock);
-  file_close (file);
-  lock_release (&fs_lock);
   return success;
 }
 
