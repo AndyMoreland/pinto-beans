@@ -10,6 +10,7 @@
 #include "threads/malloc.h"
 #include "devices/input.h"
 #include "threads/synch.h"
+#include "userprog/process.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
@@ -439,10 +440,22 @@ syscall_halt (struct intr_frame *f)
 static void
 syscall_exec (struct intr_frame *f)
 {
+  char **cmdline;
+  if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
 
+//  printf ("exec: '%s'\n", *cmdline);
+  f->eax = process_execute (*cmdline);
 }
 
 static void
 syscall_wait (struct intr_frame *f)
 {
+  int *pid;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &pid))
+    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+
+  f->eax = process_wait (*pid);
 }
+

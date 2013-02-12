@@ -182,6 +182,7 @@ process_execute (const char *cmdline)
   /* Create a new thread to execute FILE_NAME. */
   char process_name[20];
   parse_first_word (process_name, cmdline, sizeof (process_name));
+//  printf ("process name: '%s' / parent: '%s'\n", process_name, thread_current ()->name);
 
   struct process_init_data data;
   data.cmdline = cmdline_copy;
@@ -189,6 +190,7 @@ process_execute (const char *cmdline)
   sema_init (&data.sema, 0);
 
   tid = thread_create (process_name, PRI_DEFAULT, start_process, &data);
+//  printf ("started %s with tid %d\n", process_name, tid);
   sema_down (&data.sema);
   
   if (tid == TID_ERROR)
@@ -232,6 +234,7 @@ start_process (void *aux)
         success = false;
       else
         {
+          process_data->tid = thread_current ()->tid;
           thread_current ()->pdata = (void *)process_data;
           thread_current ()->parent_process = init_data->parent_process;
           list_push_back (&init_data->parent_process->child_processes, &process_data->elem);
@@ -268,12 +271,15 @@ start_process (void *aux)
 int
 process_wait (tid_t child_tid)
 {
+//  printf ("starting wait on %d from %s\n", child_tid, thread_current ()->name);
   if (1) {
     struct pdata *child = pdata_remove_tid (thread_current (), child_tid);
     if (!child)
       return -1;
 
+//    printf ("found wait on %d\n", child_tid);
     sema_down (&child->dead_latch);
+//    printf ("finished wait on %d\n", child_tid);
     int retval = child->process_return_val;
     pdata_release (child);
     return retval;
