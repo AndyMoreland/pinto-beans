@@ -244,13 +244,11 @@ static void
 start_process (void *aux)
 {
   struct process_init_data* init_data = (struct process_init_data *)aux;
-
   char *argv[MAX_ARGS];
   int argc = parse_words (init_data->cmdline, argv, MAX_ARGS);
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
-
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -459,6 +457,20 @@ load (const char *file_name, int argc, char **argv,
   bool success = false;
   int i;
   int strlen_args = 0;
+<<<<<<< HEAD
+=======
+
+  for (i = 0; i < argc; i++)
+    strlen_args += strlen (argv[i]); 
+
+  int stack_size = process_estimate_stack_size (strlen_args, argc);
+
+  if (stack_size > PGSIZE)
+    {
+      success = false;
+      goto done;
+    }
+>>>>>>> origin/project_2
 
   for (i = 0; i < argc; i++)
     strlen_args += strlen(argv[i]);
