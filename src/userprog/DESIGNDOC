@@ -37,7 +37,15 @@ Alex Ryan: Process control syscalls, process persistence
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-FIXME: do this
+From process.c: 
+struct process_init_data {
+  char *cmdline;
+  ...
+};
+
+`cmdline` is used to hold a pointer to a malloced copy of the
+full command line. We pass this struct as aux data to process_start.
+
 
 ---- ALGORITHMS ----
 
@@ -87,7 +95,70 @@ if that is desired.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-FIXME: do this
+process.c: 
+This struct is used to store metadata that potentially lives on after
+the associated process dies.
+
+struct pdata {
+  struct list_elem elem;
+  int tid;
+  struct lock monitor;
+  struct semaphore dead_latch;
+  int references;
+  int process_return_val;
+};
+
+`elem` is used for membership in a thread's list of child processes
+`tid` is used as an ID for lookups in the list of child processes
+  from the perspective of the parent
+`monitor` is a monitor lock that protects all of this struct's state
+`dead_latch` is used to prevent `wait` from returning until the child
+  exits.
+`references` is used as a ref-count to prevent prematurely killing this
+  struct.
+`process_return_val` stores the return val of the this process when it
+  dies.
+
+syscall.c:
+
+This struct is used to store metadata about opened files.
+
+struct file_descriptor {
+  struct list_elem elem;
+  struct file *f;
+  int fd_id;
+};
+
+`elem` is used for membership in a thread's file_descriptors list
+`f` is a pointer to the associated file
+`fd_id` is a process-unique id that is used for reference by 
+  user code
+
+thread.h:
+
+struct thread:
+
+The following members of thread are all used when a thread is a process.
+
+struct list file_descriptors;
+struct file *executable;
+int highest_fd_id;      
+struct list_elem child_elem;
+struct list child_processes;
+struct pdata *pdata;                
+struct thread *parent_process;
+
+`file_descriptors` is used to store a list of open file descriptors
+  associated with the process.
+`executable` pointer to the file that this process is running out of.
+  We need a reference so that we can close the file when we terminate.
+`highest_fd_id` is the highest_fd_id that has been allocated for this
+  process so far. This allows us to not re-use fd_ids.
+`child_elem` is used for membership in the child_processes list.
+`child_processes` list of processes spawned (using exec) by this process.
+`pdata` is a pointer to metadata for this process that might outlive it.
+`parent_process` is a pointer to the process that spawned this one.
+
 
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
