@@ -331,7 +331,12 @@ FIXME: review this
 
 One major advantage that we have is that it is easy to tell if fd_id
 that a user supplies to us is completely bogus. This is much harder
-if an fd_id is literally a pointer to the file_descriptor data.
+if an fd_id is literally a pointer to the file_descriptor data. But
+this way we never dereference a pointer that points to a deallocated
+file_descriptor block.
+
+Also, if we wanted to we would be able to move where we stored the 
+file_descriptor information.
 
 On the other hand, we have a hard time distinguishing file descriptors
 for different processes. If process `a` maps an FD to id 3, and process

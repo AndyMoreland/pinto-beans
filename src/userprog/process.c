@@ -326,7 +326,7 @@ process_wait (tid_t child_tid)
   return -1;
 }
 
-/* Free the current process's /* FIXME: should probably call this from our cleanup? */
+/* Free the current process's data, file descriptors and page table. */
 void
 process_exit (void)
 {
