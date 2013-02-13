@@ -155,25 +155,22 @@ a very small performance increase.
 We implement wait by storing the processes' exit status in a struct
 that is malloced externally from the thread struct. This block
 lives until both the child and parent die -- at this point we no longer
-are interested in the return information of the process.
+are interested in the return information of the process. (It is managed
+directly by reference counting. Whenever its reference count its zero,
+that is, the child and parent have both died, it is freed.)
 
-In this block we have a semaphore that is initialized to 0 when
-the process is created. When the child dies, it stores its return
-value in the `pdata` block sema-ups, and then it 
-decrements a reference count that is initialized to 2.
+The actual synchronization of wait() is handled by a semaphore that 
+also lives in this block. This semaphore starts with 0 tickets. The child
+sema-ups when it dies, and the parent sema-downs when it waits. This way,
+the wait() will return only after the child has died (with appropriate
+exit value accessible). This is a desirable solution as if the child
+has already died, a subsequent call to wait() by the parent will return
+immediately; otherwise, the parents waits exactly until the child has
+determined its exit value.
 
-When the parent dies, it decrements the reference count also.
-At any point, if the reference count reaches 0 we free the block.
-
-Anyways, when the parent calls "wait", we sema-down on the pdata 
-semaphore. This returns once the child process dies, or immediately
-if it is already dead, and then we return the child's return
-value to the caller.
-
-Race conditions in this pdata struct are prevented by the use of a
-monitor lock that protects all of its state.
-
-FIXME: review this
+Race conditions (in our case, only reference counting) in this pdata 
+struct are prevented by the use of a monitor lock that protects all 
+of its state.
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -226,7 +223,22 @@ that all of our code follows.
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
-FIXME: do this
+The parent process passes (in its auxiliary data to start_process) a
+pointer to a struct containing a semaphore and a `success' flag (along
+with some housekeeping info for the actual executable loading, etc.). 
+After the parent invokes a thread_start() for the child, it sema_downs() 
+the same sema that it passed to the child process. The child process 
+sema_up()s only after it has finished loading (or fails to do so, setting
+the appropriate value for the `success' flag).
+
+Through this mechanism, process_execute waits for the start_process to
+finish loading all of its required process state (loading of the stack,
+creation of the `pdata' block used to communicate return values, etc.).
+If the child process set `success'==false, the parent process simply
+returns -1 from process_execute; otherwise, it returns the proper tid.
+The exec() system call translates directly into process_execute, so it
+will not return until this loading process is complete.
+
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -235,7 +247,40 @@ FIXME: do this
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
-FIXME: do this
+As explained in B5, we maintain a semaphore and a return value in a 
+malloc'd block external to any thread struct. A parent maintains a list
+of the blocks for each child process, as well as a pointer to its own.
+These blocks are reference-counted, owned initially by both the parent
+and child, and released whenever either of them die. (It is then freed
+only after both parent and child have exited.)
+
+The synchronization between parent and child is then handled by this
+semaphore (which, as stated above-will live as long as each of them).
+The parent sema_down()s when it waits() for that child, and the child
+sema_up()s when it exits. This handles all of the interleaving between
+parent and child processes to ensure that wait() returns when the child
+has exited (the return value is also passed through this external struct):
+
+- P waits before C exits? Sema_down() will block until the child sema_up()s
+on exit.
+- P waits after C exits? Then sema_down() will succeed and wait() will
+immediately return.
+- P never waits? when P exits, it will release its reference to each of its
+children synchronization blocks.
+- After P waits on a child, it removes that child's synchronization block
+from its list of child processes, freeing the memory as well as causing
+subsequent waits to return -1.
+
+Resource management is handled collectively through the reference count
+on this external struct; whoever decrements the reference to 0 is
+responsible for ultimately freeing it. [Note: we could have chosen to
+free this block after the parent exits, regardless of the state of the 
+child. However, these blocks are but a few bytes in size and require
+additionally synchronization and housekeeping between possibly dead
+children in order to determine the appropriate actions to take in each
+of the distinct interleavings between exit() and wait(). For the sake
+of simplicitly, we have stuck with this reference-counted approach.]
+
 
 ---- RATIONALE ----
 
@@ -253,7 +298,6 @@ we don't needlessly check every byte in a buffer; we just make sure
 that every page that is referenced is mapped and that the start
 and end of the buffer lie within user memory.
 
-FIXME: review this
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
@@ -278,6 +322,9 @@ complicated than necessary.
 >> If you changed it, what advantages are there to your approach?
 
 We did not change this because in this system each process has one thread.
+This makes the housekeeping of the map between them trivial. However,
+in a system where a process is allowed multiple threads, it is quite clear
+that there is no one-to-one mapping between pids and tids.
 
 			   SURVEY QUESTIONS
 			   ================
