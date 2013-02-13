@@ -120,9 +120,6 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
 
-    /* FIXME: `int' instead of `pid_t' */
-    int pid;
-
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
     
