@@ -139,6 +139,21 @@ struct pdata {
 `process_return_val` stores the return val of the this process when it
   dies.
 
+Used as part of initialization:
+
+struct process_init_data {
+  ...
+  struct thread *parent_process;
+  struct semaphore sema;
+  bool success;
+};
+
+`parent_process` is used in the creation of a pdata block for the
+  child process.
+`sema` is used to synchronize the return of process_execute with 
+  the successful loading of the desired executable.
+`success` if start_process succeeds or not.
+
 syscall.c:
 
 This struct is used to store metadata about opened files.
