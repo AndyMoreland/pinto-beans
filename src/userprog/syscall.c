@@ -31,7 +31,6 @@ static void syscall_seek (struct intr_frame *f);
 static void syscall_tell (struct intr_frame *f);
 static void syscall_close (struct intr_frame *f);
 static void syscall_do_close (int fd_id);
-static void syscall_exit_and_cleanup (int code);
 
 static bool syscall_verify_pointer (void *vaddr);
 static bool syscall_verify_pointer_offset (void *vaddr, size_t offset);
@@ -120,13 +119,6 @@ syscall_cleanup_process_data (void)
   lock_release (&fs_lock);
 }
 
-/* Used to do more stuff -- now that stuff is done through process_exit. */
-static void
-syscall_exit_and_cleanup (int code) 
-{
-  thread_exit_with_message (code);
-}
-
 void
 syscall_init (void) 
 {
@@ -185,10 +177,10 @@ syscall_verify_string (char *str)
     {
       cursor++;
       if ((void *) cursor - previous_page_start >= PGSIZE)
-	{
+        {
           cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
           previous_page_start = cursor;
-	}
+        }
       valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
     }
 
@@ -200,7 +192,7 @@ syscall_handler (struct intr_frame *f)
 {
   int *interrupt_number;
   if (!syscall_pointer_to_arg (f, 0, (void **) &interrupt_number))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   switch (*interrupt_number) 
     {
@@ -256,7 +248,7 @@ syscall_handler (struct intr_frame *f)
       syscall_close (f);
       break;
     default:
-      syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+      thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
       break;
     }
 }
@@ -271,7 +263,7 @@ syscall_create (struct intr_frame *f)
       || !syscall_verify_pointer (*file)
       || !syscall_verify_string (*file)
       || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
   
   lock_acquire (&fs_lock);
   f->eax = filesys_create (*file, *initial_size);
@@ -286,7 +278,7 @@ syscall_open (struct intr_frame *f) {
   if (!syscall_pointer_to_arg (f, 1, (void **) &name)
       || !syscall_verify_pointer (*name)
       || !syscall_verify_string (*name))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
   
   lock_acquire (&fs_lock);
   if (*name != NULL)
@@ -320,7 +312,7 @@ syscall_close (struct intr_frame *f)
   int *fd_id;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   syscall_do_close (*fd_id);
 }
@@ -331,7 +323,7 @@ syscall_remove (struct intr_frame *f)
   char **name;
   if (!syscall_pointer_to_arg (f, 1, (void **) &name)
       || !syscall_verify_string (*name))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   if (*name != NULL)
     {
@@ -347,7 +339,7 @@ syscall_filesize (struct intr_frame *f)
   int *fd_id;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
@@ -401,7 +393,7 @@ syscall_read (struct intr_frame *f)
       || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
       || !syscall_pointer_to_arg (f, 3, (void **) &size)
       || !syscall_verify_pointer_offset (*buffer, *size))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   if (*fd_id == STDIN_FILENO)
     {
@@ -433,7 +425,7 @@ syscall_seek (struct intr_frame *f)
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
       || !syscall_pointer_to_arg (f, 2, (void **) &position))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
@@ -449,7 +441,7 @@ syscall_tell (struct intr_frame *f)
   int *fd_id;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
   
@@ -469,9 +461,9 @@ syscall_exit (struct intr_frame *f)
   int *exit_number;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &exit_number))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-  syscall_exit_and_cleanup (*exit_number);
+  thread_exit_with_message (*exit_number);
 }
 
 static void
@@ -486,7 +478,7 @@ syscall_exec (struct intr_frame *f)
   char **cmdline;
   if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline)
       || !syscall_verify_string (*cmdline))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
 //  printf ("exec: '%s'\n", *cmdline);
   f->eax = process_execute (*cmdline);
@@ -498,7 +490,7 @@ syscall_wait (struct intr_frame *f)
   int *pid;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &pid))
-    syscall_exit_and_cleanup (SYSCALL_ERROR_EXIT_CODE);
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   f->eax = process_wait (*pid);
 }

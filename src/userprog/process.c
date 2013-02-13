@@ -20,6 +20,9 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 
+/* Maximum command line arguments. */
+#define MAX_ARGS 128
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *file_name, int argc, char **argv, 
                   void (**eip) (void), void **esp);
@@ -206,7 +209,19 @@ process_execute (const char *cmdline)
   return data.success? tid : TID_ERROR;
 }
 
-
+static int
+process_estimate_stack_size (int strlen, int argc)
+{
+  int stack_size = strlen; // size of args passed
+  stack_size += sizeof (int); // padding (up to 4 bytes)
+  stack_size += sizeof (char *); // argv[argc]
+  stack_size += argc * sizeof (char *); // argv[0...1]
+  stack_size += sizeof (char * *); // &argv
+  stack_size += sizeof (int); // argc
+  stack_size += sizeof (void *); // return address
+  
+  return stack_size;
+}
 
 /* A thread function that loads a user process and starts it
    running. */
@@ -215,12 +230,20 @@ start_process (void *aux)
 {
   struct process_init_data* init_data = (struct process_init_data *)aux;
 
-#define MAX_ARGS 128
   char *argv[MAX_ARGS];
+  int strlen = strlen (init_data->cmdline);
   int argc = parse_words (init_data->cmdline, argv, MAX_ARGS);
+  int stack_size = process_estimate_stack_size (strlen, argc);
+
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
+
+  if (stack_size > PGSIZE)
+    {
+      success = false;
+      goto done;
+    }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -672,7 +695,7 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
               memcpy (*esp, argv[i], strlen (argv[i]) + 1);
             }
           /* Alignment padding and argv[argc] = 0 */
-          // FIXME: zero these out
+
           *esp -= (size_t) *esp % 4;
           *esp -= sizeof (char *);
           
@@ -692,8 +715,6 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           *esp -= sizeof (int);
           memcpy (*esp, &argc, sizeof (int));
           
-          
-          // FIXME: zero this out
           /* Make space for return address */
           *esp -= sizeof (void *);
 
