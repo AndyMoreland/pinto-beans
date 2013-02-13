@@ -9,9 +9,8 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+Andy Moreland <andymo@stanford.edu>
+Alex Ryan <alexryan@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -22,9 +21,8 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+Andy Moreland: FS syscalls, arg passing, user memory access
+Alex Ryan: Process control syscalls, process persistence
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -45,13 +43,32 @@ FirstName LastName: contribution
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
+
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
 
+strtok's specification requires that the C library implementors maintain
+some sort of state on every call to strtok. This makes me suspicious
+of its thread safety and I wonder about how it manages memory. strtok_r
+is cleaner in these regards, especially since we are programming a kernel
+and care a lot about concurrency and memory.
+
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
+
+The Unix approach allows multiple arg separation schemes to coexist --
+for instance, the shell could choose to use the ';' character as an
+arg separator if it wanted to.
+
+To Unix approach also reduces the amount of vulnerable surface area of
+the kernel. There is no need for the kernel to perform string manipula-
+tion or do other complicated things that could potentially lead to stack
+overflows.
+
+Furthermore, Unix allows executables to contain spaces in their names,
+if that is desired.
 
 			     SYSTEM CALLS
 			     ============
@@ -66,10 +83,37 @@ FirstName LastName: contribution
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+File descriptors are structs that are malloced. They are assigned an
+integer ID that is passed to and returned from syscalls. Each
+process maintains a list of file descriptors that it has opened and
+iterates over this list in order to find the requested one.
+
+The ids are only unique within a process.
+
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
+
+In order to look up the i'th arg, we offset from the passed esp
+by sizeof(char *) * i. Then we verify that this address is valid before
+dereferencing it, and if it is a buffer or string pointer then
+we check that what it is pointing to is valid.
+
+We have a few main functions that we use in order to verify addresses:
+
+The main one is `verify_pointer`. It verifies that the pointer that it
+is passed is in user space that has been mapped to a page this logic is
+extracted out into `verify_address`. We also verify that
+`verify_pointer_offset` for an offset of sizeof (void *) is valid.
+
+`verify_pointer_offset` is intended for checking that all of the memory 
+between the passed address and the given offset is correct. We check
+the address at `pointer + offset` and `pointer + PGSIZE * i` for every
+`pointer + PGSIZE * i` that is less than `pointer + offset`.
+
+`verify_address` checks that the given address is in user memory and
+that it is mapped to a page.
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
@@ -95,6 +139,36 @@ FirstName LastName: contribution
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+We verify all arguments, buffers and strings are in valid user memory
+before we use them. Since we know that we are operating in a single-
+threaded process on a single-core machine, we know that if we are 
+in a syscall once the syscall has validated these things they will
+remain valid at least until we return.
+
+We only allocate memory or locks after we have validated arguments.
+Furthermore, it is baked into the cleanup process of a process that is
+terminated that all memory or locks that syscalls allocate are 
+cleaned up.
+
+Thus, we minimize pointless resource allocation and always make sure
+to clean up after ourselves.
+
+As an example, if we `open` a file using valid arguments, our
+syscall code will acquire a lock that protects the file system and then 
+malloc a struct on the kernel's heap that it uses for housekeeping. If
+the arguments were invalid, none of this will happen so we don't pointlessly
+create anything that we need to clean up. If we then try to run a syscall
+passing in a pointer to a buffer partly in kernel memory or unmapped user
+memory, we will kill the thread and this execution flow leads us to
+process_exit which iterates over all of the file_descriptor structs that
+were opened and frees them. No locks could have been open at this point
+since we make sure to acquire locks only once we decide we won't kill the
+thread in that syscall.
+
+So, we're completely tidy at this point. This is the general outline
+that all of our code follows.
+
+
 ---- SYNCHRONIZATION ----
 
 >> B7: The "exec" system call returns -1 if loading the new executable
@@ -114,11 +188,40 @@ FirstName LastName: contribution
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
+We decided to write out user memory access the way we did because
+we wanted to make it as simple as possible. We felt that since this is
+a toy operating system, efficiency is not as important and it's just
+easier to bake the logic for handling invalid addresses into explicit
+C code rather than relying on the MMU.
+
+Also, we optimized our verification code fairly well, so (for instance)
+we don't needlessly check every byte in a buffer; we just make sure
+that every page that is referenced is mapped and that the start
+and end of the buffer lie within user memory.
+
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+One major advantage that we have is that it is easy to tell if fd_id
+that a user supplies to us is completely bogus. This is much harder
+if an fd_id is literally a pointer to the file_descriptor data.
+
+On the other hand, we have a hard time distinguishing file descriptors
+for different processes. If process `a` maps an FD to id 3, and process
+`b` maps an FD to id 3, it is possible that if process b talks to a, 
+`b` could mistakenly pass its file descriptor and have `a` try to use it
+and not encounter an error.
+
+If we had used globally uniqued fd_ids, this problem would be easy to 
+solve, but then we would have to ensure that no races occurred in
+incrementing this counter. We could have used gcc builtins in order
+to do an atomic get and increment, but we felt that this was more
+complicated than necessary.
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
+
+We did not change this because in this system each process has one thread.
 
 			   SURVEY QUESTIONS
 			   ================
