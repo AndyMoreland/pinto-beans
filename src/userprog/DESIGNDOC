@@ -199,10 +199,11 @@ struct thread *parent_process;
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
-File descriptors are structs that are malloced. They are assigned an
-integer ID that is passed to and returned from syscalls. Each
-process maintains a list of file descriptors that it has opened and
-iterates over this list in order to find the requested one.
+File descriptors are structs that are malloced when a file is opened.
+They are assigned an integer ID that is passed to and returned from
+syscalls. Each process maintains a list of file descriptors that it
+has opened and iterates over this list in order to find the requested
+one.
 
 The ids are only unique within a process.
 
@@ -219,7 +220,7 @@ we check that what it is pointing to is valid.
 We have a few main functions that we use in order to verify addresses:
 
 The main one is `verify_pointer`. It verifies that the pointer that it
-is passed is in user space that has been mapped to a page this logic is
+is passed is in user space that has been mapped to a page. This logic is
 extracted out into `verify_address`. We also verify that
 `verify_pointer_offset` for an offset of sizeof (void *) is valid.
 
@@ -247,13 +248,16 @@ In the 2 byte case, we will also check at most 3, since we check
 the start and end, and there is a possibly redundant call to
 the check if the 2nd byte is over the page boundary, since
 we treat it as a buffer and so check the first byte of every page
-that is not the page of the start byte.
+that is not the page of the start byte in addition to the start and end.
 
 In general, if we span n pages, we will make n + 2 calls to 
 pagedir_get_page. We could (in some cases) make this n + 1, as in the
 2 byte case, because we could skip the redundant middle check. This
 would significantly change how we factored our code, and only gain
 a very small performance increase.
+
+Note that we are better than the naive implementation which would 
+make O(m) calls if there were m bytes in the buffer.
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
@@ -393,11 +397,11 @@ of simplicitly, we have stuck with this reference-counted approach.]
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
-We decided to write out user memory access the way we did because
+We decided to write our user memory access the way we did because
 we wanted to make it as simple as possible. We felt that since this is
 a toy operating system, efficiency is not as important and it's just
 easier to bake the logic for handling invalid addresses into explicit
-C code rather than relying on the MMU.
+C code rather than implicitly using the MMU.
 
 Also, we optimized our verification code fairly well, so (for instance)
 we don't needlessly check every byte in a buffer; we just make sure
