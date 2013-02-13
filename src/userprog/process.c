@@ -93,11 +93,9 @@ pdata_release (struct pdata *p)
     free (p);
 }
 
-static void pdata_on_exit (struct thread *t, int retval)
+static void pdata_on_exit (struct thread *t)
 {
   struct pdata *p = (struct pdata *)t->pdata;
-  if (p)
-    p->process_return_val = retval;
 
   struct list *children = &t->child_processes;
   while (!list_empty (children))
@@ -118,6 +116,7 @@ struct process_init_data {
   char *cmdline;
   struct thread *parent_process;
   struct semaphore sema;
+  bool success;
 };
 
 static int
@@ -157,6 +156,13 @@ parse_first_word (char *dst, const char *src, int buflen)
   return c;
 }
 
+void 
+process_set_return_val (int retval)
+{
+  struct pdata *p = pdata_current ();  
+  if (p)
+    p->process_return_val = retval;
+}
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -183,7 +189,6 @@ process_execute (const char *cmdline)
   /* Create a new thread to execute FILE_NAME. */
   char process_name[20];
   parse_first_word (process_name, cmdline, sizeof (process_name));
-//  printf ("process name: '%s' / parent: '%s'\n", process_name, thread_current ()->name);
 
   struct process_init_data data;
   data.cmdline = cmdline_copy;
@@ -191,14 +196,14 @@ process_execute (const char *cmdline)
   sema_init (&data.sema, 0);
 
   tid = thread_create (process_name, PRI_DEFAULT, start_process, &data);
-//  printf ("started %s with tid %d\n", process_name, tid);
   sema_down (&data.sema);
   
   if (tid == TID_ERROR)
     {
       free (data.cmdline);
+      return TID_ERROR;
     }
-  return tid;
+  return data.success? tid : TID_ERROR;
 }
 
 
@@ -224,7 +229,6 @@ start_process (void *aux)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, argc, argv, &if_.eip, &if_.esp);
 
-  /* If load failed, quit. */
   free (init_data->cmdline);
   init_data->cmdline = NULL; 
 
@@ -242,12 +246,12 @@ start_process (void *aux)
         }
     }
         
-
+  init_data->success = success;
   sema_up (&init_data->sema);
+  /* If load failed, quit. */
 
   if (!success) 
     {
-      sema_up (&init_data->sema);
       thread_exit ();
     }
 
@@ -273,15 +277,12 @@ start_process (void *aux)
 int
 process_wait (tid_t child_tid)
 {
-//  printf ("starting wait on %d from %s\n", child_tid, thread_current ()->name);
   if (1) {
     struct pdata *child = pdata_remove_tid (thread_current (), child_tid);
     if (!child)
       return -1;
 
-//    printf ("found wait on %d\n", child_tid);
     sema_down (&child->dead_latch);
-//    printf ("finished wait on %d\n", child_tid);
     int retval = child->process_return_val;
     pdata_release (child);
     return retval;
@@ -306,7 +307,7 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
   
-  pdata_on_exit (cur, 0);
+  pdata_on_exit (cur);
   syscall_cleanup_process_data ();
   
   /* Destroy the current process's page directory and switch back
@@ -437,11 +438,14 @@ load (const char *file_name, int argc, char **argv,
   lock_acquire (&fs_lock);
   file = filesys_open (file_name);
   lock_release (&fs_lock);
+
   if (file == NULL)
       goto done; 
 
+  t->executable = file;
   /* Read and verify executable header. */
   lock_acquire (&fs_lock);
+  file_deny_write (file);
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
       || ehdr.e_type != 2
@@ -532,9 +536,6 @@ load (const char *file_name, int argc, char **argv,
   if (lock_held_by_current_thread (&fs_lock))
     lock_release (&fs_lock);
 
-  lock_acquire (&fs_lock);
-  file_close (file);
-  lock_release (&fs_lock);
   return success;
 }
 

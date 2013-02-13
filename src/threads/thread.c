@@ -340,6 +340,9 @@ void
 thread_exit_with_message (int exit_code) 
 {
   printf ("%s: exit(%d)\n", thread_current ()->name, exit_code);
+#ifdef USERPROG
+  process_set_return_val (exit_code);
+#endif
   thread_exit ();
 }
 

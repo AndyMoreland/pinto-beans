@@ -11,8 +11,7 @@
 #include "devices/input.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
-
-#include "lib/user/syscall.h"
+#include "devices/shutdown.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
@@ -115,6 +114,10 @@ syscall_cleanup_process_data (void)
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
+
+  lock_acquire (&fs_lock);
+  file_close (t->executable);
+  lock_release (&fs_lock);
 }
 
 /* Used to do more stuff -- now that stuff is done through process_exit. */
@@ -175,15 +178,18 @@ syscall_verify_string (char *str)
 
   char *cursor = str;
   void *cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+  void *previous_page_start = pg_round_down (cursor);
   bool valid = is_user_vaddr (cursor) && cur_page != NULL;
   
   while (valid && *cursor != '\0')
     {
-      if (cursor - (char *) cur_page > 4096)
-        cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
-
-      valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
       cursor++;
+      if ((void *) cursor - previous_page_start >= PGSIZE)
+	{
+          cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+          previous_page_start = cursor;
+	}
+      valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
     }
 
   return valid;
@@ -469,8 +475,9 @@ syscall_exit (struct intr_frame *f)
 }
 
 static void
-syscall_halt (struct intr_frame *f)
+syscall_halt (struct intr_frame *f UNUSED)
 {
+  shutdown_power_off ();
 }
 
 static void

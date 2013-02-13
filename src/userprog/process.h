@@ -3,6 +3,7 @@
 
 #include "threads/thread.h"
 
+void process_set_return_val (int retval);
 tid_t process_execute (const char *cmdline);
 int process_wait (tid_t);
 void process_exit (void);
