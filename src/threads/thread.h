@@ -122,8 +122,11 @@ struct thread
 
     /* FIXME: `int' instead of `pid_t' */
     int pid;
+
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
+    
+    /* Used by userprog/process.c */
     struct file *executable;            /* Pointer to file that thread is running. */
     int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
     struct list_elem child_elem;        /* List elem for child_processes list */
