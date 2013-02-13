@@ -3,6 +3,7 @@
 #define USERPROG_SYSCALL_H
 #include "threads/interrupt.h"
 
+/* Return value for failed syscalls. */
 #define SYSCALL_ERROR_EXIT_CODE -1
 
 void syscall_init (void);

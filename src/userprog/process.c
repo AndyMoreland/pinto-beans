@@ -28,17 +28,19 @@ static bool load (const char *file_name, int argc, char **argv,
                   void (**eip) (void), void **esp);
 static int parse_words (char *cmdline, char **argv, int max_argc);
 
-
-
+/* Struct used for storing process data that needs to 
+   live on after the process dies. */
 struct pdata {
-  struct list_elem elem;
-  int tid;
-  struct lock monitor;
-  struct semaphore dead_latch;
-  int references;
+  struct list_elem elem; // used for storage in list of child processes
+  int tid; // id of thread associated with this process
+  struct lock monitor; // Monitor variable that guards struct state
+  struct semaphore dead_latch; // 0 tickets if thread alive, 1 if dead
+  int references; // initialized to 2 -- decremented when parent/child die
   int process_return_val;
 };
 
+/* Removes the given tid's pdata from parent's child list */
+/* Returns the pdata struct of the child if succesful or NULL */
 static struct pdata *
 pdata_remove_tid (struct thread *parent, tid_t tid)
 {
@@ -61,12 +63,14 @@ pdata_remove_tid (struct thread *parent, tid_t tid)
   return NULL;
 }
 
+/* Returns a pointer to the pdata struct for the current thread. */
 static struct pdata *
 pdata_current (void)
 {
   return (struct pdata *)thread_current ()->pdata;
 }
 
+/* Creates a new pdata struct and initializes the members. */
 static struct pdata *
 pdata_create (void)
 {
@@ -81,6 +85,8 @@ pdata_create (void)
   return p;
 }
 
+/* Decrements the ref count of the given pdata.
+   If the ref count drops to 0, frees the struct */
 static void 
 pdata_release (struct pdata *p)
 {
@@ -96,6 +102,10 @@ pdata_release (struct pdata *p)
     free (p);
 }
 
+/* Called when t exits. Iterates over children
+   releasing t's reference to them.
+   Also decrements t's own pdata block's reference
+   count and releases the semaphore */
 static void pdata_on_exit (struct thread *t)
 {
   struct pdata *p = (struct pdata *)t->pdata;
@@ -115,6 +125,8 @@ static void pdata_on_exit (struct thread *t)
     }
 }
 
+/* Utility struct used for argument passing
+   and synchronization with exec syscall */
 struct process_init_data {
   char *cmdline;
   struct thread *parent_process;
@@ -122,6 +134,8 @@ struct process_init_data {
   bool success;
 };
 
+/* stroktok_r's over the cmdline. Returns argc and
+   updates argv. */
 static int
 parse_words (char *cmdline, char **argv, int max_argc) {
   char *word;
@@ -159,6 +173,8 @@ parse_first_word (char *dst, const char *src, int buflen)
   return c;
 }
 
+/* Updates the return value in the current
+   threads pdata block. Used in thread.c */
 void 
 process_set_return_val (int retval)
 {
@@ -166,6 +182,7 @@ process_set_return_val (int retval)
   if (p)
     p->process_return_val = retval;
 }
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -177,8 +194,6 @@ process_execute (const char *cmdline)
   tid_t tid;
 
   /* We require that a cmdline input be at most the size of a page. */
-  // FIXME: will still overflow if we have lots of args -- 4 additional
-  // per arg.
   if (strlen (cmdline) > PGSIZE)
     return TID_ERROR;
 
@@ -231,19 +246,11 @@ start_process (void *aux)
   struct process_init_data* init_data = (struct process_init_data *)aux;
 
   char *argv[MAX_ARGS];
-  int strlen = strlen (init_data->cmdline);
   int argc = parse_words (init_data->cmdline, argv, MAX_ARGS);
-  int stack_size = process_estimate_stack_size (strlen, argc);
-
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
 
-  if (stack_size > PGSIZE)
-    {
-      success = false;
-      goto done;
-    }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -321,17 +328,18 @@ process_wait (tid_t child_tid)
   return -1;
 }
 
-/* Free the current process's resources. */
-/* FIXME: should implement syscall_exit_and_cleanup in here */
-/* FIXME: should probably call this from our cleanup? */
+/* Free the current process's /* FIXME: should probably call this from our cleanup? */
 void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-  
-  pdata_on_exit (cur);
+
+  /* Close open file descriptors */
   syscall_cleanup_process_data ();
+  
+  /* Decrement refcount on thread's pdata, release sema */
+  pdata_on_exit (cur);
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -450,7 +458,21 @@ load (const char *file_name, int argc, char **argv,
   off_t file_ofs;
   bool success = false;
   int i;
+  int strlen_args = 0;
 
+  for (i = 0; i < argc; i++)
+    strlen_args += strlen(argv[i]);
+  
+  int stack_size = process_estimate_stack_size (strlen_args, argc);
+
+  /* We have an overestimate for the stack size required for the
+     args passed. If this exceeds a page, bail out! */
+  if (stack_size > PGSIZE)
+    {
+      success = false;
+      goto done;
+    }
+    
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 

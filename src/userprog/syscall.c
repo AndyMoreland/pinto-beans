@@ -100,6 +100,8 @@ syscall_create_fd_for_file (char *name) {
   return fd;
 }
 
+/* Iterates over the current thread's file descriptors and
+   frees each of them after closing their files. */
 void
 syscall_cleanup_process_data (void)
 {
@@ -125,6 +127,7 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+/* Verifies that vaddr is within user memory and also mapped to a page */
 static bool
 syscall_verify_address (void *vaddr)
 {
@@ -133,7 +136,8 @@ syscall_verify_address (void *vaddr)
     && pagedir_get_page (t->pagedir, pg_round_down (vaddr)) != NULL;
 }
 
-/* Verifies that the given pointer points to valid memory */
+/* Verifies that the given pointer points to valid memory.
+   Checks the address and 4 bytes after the address. */
 static bool
 syscall_verify_pointer (void *vaddr) 
 {
@@ -143,7 +147,9 @@ syscall_verify_pointer (void *vaddr)
 }
 
 /* Verifies that the given pointer offset by `offset` points to a valid
-   address */
+   address. 
+   Iterates over all pages that are spanned by the offset and makes sure they
+   are mapped. */
 static bool
 syscall_verify_pointer_offset (void *vaddr, size_t offset)
 {
@@ -154,7 +160,9 @@ syscall_verify_pointer_offset (void *vaddr, size_t offset)
   return result && syscall_verify_address ((char *) vaddr + offset);
 }
 
-/* Returns the arg_number'th argument. arg_number = 0 returns int number. */
+/* Makes *buffer point to the arg_number'th arg.
+   arg_number = 0 returns interrupt number.
+   Verifies that the pointer is valid. */
 static bool
 syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer)
 {
@@ -163,6 +171,9 @@ syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer)
   return syscall_verify_pointer (pointer);
 }
 
+/* Iterates over the characters in the given string buffer.
+   Ensures that all bytes are mapped (intelligently) and 
+   in user memory. */
 static bool
 syscall_verify_string (char *str)
 {
@@ -252,6 +263,14 @@ syscall_handler (struct intr_frame *f)
       break;
     }
 }
+
+/* Below are syscalls.
+   They do what they sound like.
+   They are all wrappers around logic implemented
+   elsewhere. They perform verification and retrieval of
+   their arguments and then pass them on. 
+   If they fail they return FILE_FAILURE, or
+   whatever what they delegate to returns. */
 
 static void
 syscall_create (struct intr_frame *f)
@@ -480,7 +499,6 @@ syscall_exec (struct intr_frame *f)
       || !syscall_verify_string (*cmdline))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-//  printf ("exec: '%s'\n", *cmdline);
   f->eax = process_execute (*cmdline);
 }
 

@@ -336,6 +336,9 @@ thread_tid (void)
   return thread_current ()->tid;
 }
 
+/* Stores the exit_code of the process, if necessary.
+   Prints a message about the exit of the thread.
+   Exits the thread. */
 void
 thread_exit_with_message (int exit_code) 
 {

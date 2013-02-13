@@ -124,12 +124,12 @@ struct thread
     int pid;
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
-    struct file *executable;
+    struct file *executable;            /* Pointer to file that thread is running. */
     int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
-    struct list_elem child_elem;
-    struct list child_processes;
-    void *pdata;
-    struct thread *parent_process;
+    struct list_elem child_elem;        /* List elem for child_processes list */
+    struct list child_processes;        /* List of child processes */
+    void *pdata;                        /* Pointer to process data struct, if used */
+    struct thread *parent_process;      /* Pointer to parent process. */
 #endif
 
     /* Owned by thread.c. */
