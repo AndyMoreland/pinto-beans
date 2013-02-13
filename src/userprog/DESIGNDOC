@@ -45,9 +45,30 @@ FIXME: do this
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
-We still copy the command line that is passed to us, but now we use malloc.
+We still copy the command line that is passed into process_execute onto
+the child process so that we can do some sleazy C-style string
+manipulation on the command (involving strtok_r and overriding spaces with
+null-terminators). We chose `malloc' over `palloc' to more gracefully
+handle larger- or smaller-sized commands, and didn't want to make a
+huge stack buffer since we could be in a sensitive kernel context without
+an abundance of stack space.
 
-We parse out the first #FIXME: do this
+To actually set up the arguments to a process's main(), we first strtok_r
+the command, counting the number of arguments and keeping a pointer to 
+each. (We set a maximum argc of 128 to ease this process, which we felt
+was a reasonable maximum.) Then we loop over these arguments in reverse
+order, copying each of them (null-terminated) onto the new stack space
+for the spawned process. (So that the last argument resides at the top
+of the stack, and the others follow it in reverse order.) We then push
+the actual argv array of pointers to these locations that we just layed
+out onto the stack (again, in reverse order), and finally an address
+to that array and the count of arguments. (All of this, of course, as 
+laid out in the diagram of the assignment.)
+
+The arguments are in the right order, well, because a process will look
+at the supplied argv and index according to its array, which we have 
+set up to have argv[0] in that memory location, argv[1] in the next, etc.
+
 
 
 ---- RATIONALE ----
@@ -60,7 +81,6 @@ of its thread safety and I wonder about how it manages memory. strtok_r
 is cleaner in these regards, especially since we are programming a kernel
 and care a lot about concurrency and memory.
 
-FIXME: review this
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
@@ -70,7 +90,7 @@ The Unix approach allows multiple arg separation schemes to coexist --
 for instance, the shell could choose to use the ';' character as an
 arg separator if it wanted to.
 
-To Unix approach also reduces the amount of vulnerable surface area of
+The Unix approach also reduces the amount of vulnerable surface area of
 the kernel. There is no need for the kernel to perform string manipula-
 tion or do other complicated things that could potentially lead to stack
 overflows.
