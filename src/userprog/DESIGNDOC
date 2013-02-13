@@ -37,6 +37,8 @@ Alex Ryan: Process control syscalls, process persistence
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+FIXME: do this
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe how you implemented argument parsing.  How do
@@ -45,7 +47,7 @@ Alex Ryan: Process control syscalls, process persistence
 
 We still copy the command line that is passed to us, but now we use malloc.
 
-We parse out the first 
+We parse out the first #FIXME: do this
 
 
 ---- RATIONALE ----
@@ -57,6 +59,8 @@ some sort of state on every call to strtok. This makes me suspicious
 of its thread safety and I wonder about how it manages memory. strtok_r
 is cleaner in these regards, especially since we are programming a kernel
 and care a lot about concurrency and memory.
+
+FIXME: review this
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
@@ -82,6 +86,8 @@ if that is desired.
 >> B1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+FIXME: do this
 
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
@@ -167,6 +173,8 @@ value to the caller.
 Race conditions in this pdata struct are prevented by the use of a
 monitor lock that protects all of its state.
 
+FIXME: review this
+
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
 >> process to be terminated.  System calls are fraught with such
@@ -218,12 +226,16 @@ that all of our code follows.
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
+FIXME: do this
+
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
 >> calls wait(C) before C exits?  After C exits?  How do you ensure
 >> that all resources are freed in each case?  How about when P
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
+
+FIXME: do this
 
 ---- RATIONALE ----
 
@@ -240,6 +252,8 @@ Also, we optimized our verification code fairly well, so (for instance)
 we don't needlessly check every byte in a buffer; we just make sure
 that every page that is referenced is mapped and that the start
 and end of the buffer lie within user memory.
+
+FIXME: review this
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
