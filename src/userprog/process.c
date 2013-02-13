@@ -229,21 +229,12 @@ static void
 start_process (void *aux)
 {
   struct process_init_data* init_data = (struct process_init_data *)aux;
-
   char *argv[MAX_ARGS];
-  int strlen = strlen (init_data->cmdline);
   int argc = parse_words (init_data->cmdline, argv, MAX_ARGS);
-  int stack_size = process_estimate_stack_size (strlen, argc);
 
   char *file_name = argv[0];
   struct intr_frame if_;
   bool success;
-
-  if (stack_size > PGSIZE)
-    {
-      success = false;
-      goto done;
-    }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -450,6 +441,18 @@ load (const char *file_name, int argc, char **argv,
   off_t file_ofs;
   bool success = false;
   int i;
+  int strlen_args = 0;
+
+  for (i = 0; i < argc; i++)
+    strlen_args += strlen (argv[i]); 
+
+  int stack_size = process_estimate_stack_size (strlen_args, argc);
+
+  if (stack_size > PGSIZE)
+    {
+      success = false;
+      goto done;
+    }
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
