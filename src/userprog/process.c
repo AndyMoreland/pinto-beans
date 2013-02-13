@@ -67,7 +67,7 @@ pdata_remove_tid (struct thread *parent, tid_t tid)
 static struct pdata *
 pdata_current (void)
 {
-  return (struct pdata *)thread_current ()->pdata;
+  return thread_current ()->pdata;
 }
 
 /* Creates a new pdata struct and initializes the members. */
@@ -108,7 +108,7 @@ pdata_release (struct pdata *p)
    count and releases the semaphore */
 static void pdata_on_exit (struct thread *t)
 {
-  struct pdata *p = (struct pdata *)t->pdata;
+  struct pdata *p = t->pdata;
 
   struct list *children = &t->child_processes;
   while (!list_empty (children))
@@ -457,20 +457,6 @@ load (const char *file_name, int argc, char **argv,
   bool success = false;
   int i;
   int strlen_args = 0;
-<<<<<<< HEAD
-=======
-
-  for (i = 0; i < argc; i++)
-    strlen_args += strlen (argv[i]); 
-
-  int stack_size = process_estimate_stack_size (strlen_args, argc);
-
-  if (stack_size > PGSIZE)
-    {
-      success = false;
-      goto done;
-    }
->>>>>>> origin/project_2
 
   for (i = 0; i < argc; i++)
     strlen_args += strlen(argv[i]);

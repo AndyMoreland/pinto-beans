@@ -37,6 +37,8 @@ typedef int tid_t;
 #define RECENT_CPU_DEFAULT (fixed_point_create (0))
 #define LOAD_AVERAGE_DEFAULT 0
 
+struct pdata;
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -128,7 +130,7 @@ struct thread
     int highest_fd_id;                  /* Highest fd_id assigned for this thread so far. */
     struct list_elem child_elem;        /* List elem for child_processes list */
     struct list child_processes;        /* List of child processes */
-    void *pdata;                        /* Pointer to process data struct, if used */
+    struct pdata *pdata;                        /* Pointer to process data struct, if used */
     struct thread *parent_process;      /* Pointer to parent process. */
 #endif
 
