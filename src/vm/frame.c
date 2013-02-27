@@ -18,14 +18,15 @@ struct frame_table_entry
 static struct list free_list;
 static struct list used_list;
 
-void frame_init ()
+void 
+frame_init (void)
 {
   list_init (&used_list);
   list_init (&free_list);
 }
 
 void *
-frame_get_frame_at (void *user_vaddr, uint32_t *pd)
+frame_get_frame (void *user_vaddr, uint32_t *pd)
 {
   /* Need to check free list. */
   
