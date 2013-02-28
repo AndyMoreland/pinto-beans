@@ -8,15 +8,21 @@
 /* In order to work we need to store our kernel address.
    We also need to store our user address for our evcition. */
 
+#include <debug.h>
+#include "frame.h"
+
 struct frame_table_entry
 {
   void *frame_addr;
   void *user_addr;
   uint32_t *pd;
+
 }
 
 static struct list free_list;
 static struct list used_list;
+
+static void *frame_find_frame (void);
 
 void 
 frame_init (void)
@@ -26,22 +32,29 @@ frame_init (void)
 }
 
 void *
-frame_get_frame (void *user_vaddr, uint32_t *pd)
+frame_create_frame (void *user_vaddr, uint32_t *pd)
 {
   /* Need to check free list. */
-  
-  void *frame = palloc_get_page (PAL_USER);
+  void *frame = frame_find_frame ();
+  if (!frame)
+    PANIC ("no available pages");
 
-  if (frame)
-    {
-      struct frame_table_entry *record = malloc (sizeof (frame_table_entry));
-      record->frame_addr = frame;
-      record->user_addr = user_vaddr;
-      record->pd = pd;
-      return frame;
-    }
-  else
-    {
-      return NULL;
-    }
+  struct frame_table_entry *record = malloc (sizeof (struct frame_table_entry));
+  record->frame_addr = frame;
+  record->user_addr = user_vaddr;
+  record->pd = pd;
+  
+  return frame;
+}
+
+bool
+frame_clear_frame (void *frame_addr)
+{
+   
+}
+
+static void *
+frame_find_frame (void)
+{
+  return palloc_get_page (PAL_USER);
 }
