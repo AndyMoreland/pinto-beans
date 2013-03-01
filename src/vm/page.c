@@ -28,15 +28,14 @@ struct aux_pt_entry
   /* Might want an ENUM to track which mode this page is -- for instance,
      if it is an mmapped file or if it is just swapped out. */
   enum page_type type;
-  bool is_loaded;
+  frame_id frame;
 
   union {
-    void *frame_addr;
     struct mmap_info {
       size_t offset;
       struct mmap_descriptor *md;
     };
-    struct swapd swap_info;
+    swap_descriptor swap_info;
   };
 };
 
@@ -44,81 +43,110 @@ static struct hash aux_pt;
 static struct lock aux_pt_lock;
 
 static struct aux_pt_entry *page_create_entry (void *vaddr, uint32_t *pd);
-static struct aux_pt_entry *page_lookup_entry (void *user_vaddr, uint32_t *pd);
+static struct aux_pt_entry *page_lookup_entry (void *user_vaddr);
 static bool page_destroy_entry (struct aux_pt_entry *entry);
+static bool page_is_resident (struct aux_pt_entry *entry);
+static void page_setup (struct aux_pt_entry *entry);
 
-bool 
+void 
+page_init (void)
+{
+  hash_init (&aux_pt, hash_address, page_less, NULL);
+  lock_init (&aux_pt_lock);
+}
+
+void
 page_create_page (void *vaddr, bool zeroed, bool writable) 
 {
   struct aux_pt_entry *entry = page_create_entry (vaddr, thread_current ()->pd);
   ASSERT (entry);
-  void *frame = frame_get_frame (vaddr, entry->pd);
-  ASSERT (frame);
-  if (!pagedir_set_page (entry->pd, vaddr, frame, writable))
-    return false;
-
-  entry->is_loaded = true;
+  entry->frame = FRAME_INVALID;
   entry->type = SWAP;
-  return true;
 }
 
 void
 page_free_page (void *vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr, thread_current ()->pd);
+  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
 
+  if (entry->frame != FRAME_INVALID) 
+    {
+      frame_pin (entry->frame);
+      if (page_is_resident (entry))
+        frame_clear_frame (entry->frame);
+      else if (page->type == SWAP)
+        {
+          swap_clear (entry->swap_info);
+        }
+      else
+        {
+          // FIXME: mmap cleanup
+        }
+    }
   lock_acquire (&aux_pt_lock);
   hash_delete (&aux_pt, &entry->hash_elem);
   lock_release (&aux_pt_lock);
-
-  if (entry->is_loaded) {
-    frame_clear_frame (entry->frame_addr);
-  } else if (entry->type == SWAP) {
-    swap_clear (entry->swap_info);
-  } else {
-     // FIXME: memmap cleanup
-  }
   pagedir_clear_page (entry->pd, entry->user_addr);
-  free (vaddr);
+  // FIXME: remove from thread's page list
 }
 
 void
 page_in (void *vaddr) 
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr, thread_current ()->pd);
-  if (entry->is_loaded)
-    PANIC ("attempt to page in an active page");
-
-  void *frame;
-  if (entry->type == SWAP) {
-    frame = frame_create_frame (entry->user_addr, entry->pd);
-    swap_read (frame, entry->swap_info, PG_SIZE);
-  } else { // mmap
-    // FIXME: mmap page in
-  }
-
-  entry->frame_addr = frame;
-  entry->is_loaded = false;
+  ASSERT (!page_is_resident (page_lookup_entry (user_vaddr)));
+  page_in_and_pin (vaddr);
+  page_unpin (vaddr);
 }
 
 void 
 page_out (void *vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr, thread_current ()->pd);
-  if (!entry->is_loaded)
-    PANIC ("attempt to page out an inactive page");
+  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  ASSERT (entry->frame != FRAME_INVALID && page_is_resident (entry));
 
-  void *frame = entry->frame_addr;
-  if (entry->type == SWAP) {
-    // FIXME: locking - page trying to be swapped out already, etc  
-    entry->swap_info = swap_write (frame, PGSIZE);
-  } else { // mmap
-    // FIXME: memmap page out
-  }
-  frame_clear_frame (frame);
-  entry->is_loaded = false;
+  pagedir_clear_page (entry->pd, entry->user_addr);
+  if (entry->type == SWAP) 
+    {
+      // FIXME: locking - page trying to be swapped out already, etc  
+      void *frame_addr = frame_get_kernel_addr (entry->frame);
+      entry->swap_info = swap_write (frame_addr, PGSIZE);
+    } 
+  else 
+    { // mmap
+      // FIXME: memmap page out
+    }
 }
 
+void page_in_and_pin (void *user_vaddr)
+{
+  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+
+  if (entry->frame != FRAME_INVALID)
+    {
+      frame_pin (entry->frame);
+      if (page_is_resident (entry))
+        return;
+      frame_unpin (entry->frame);
+    }
+  frame_id new_frame = frame_get_frame_pinned (entry->user_addr, entry->pd);
+  page_setup (new_frame);
+  entry->frame = new_frame;
+}
+
+void page_unpin (void *user_vaddr)
+{
+  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  ASSERT (entry->frame != FRAME_INVALID);
+  frame_unpin (entry->frame);
+}
+
+static void 
+page_setup (struct aux_pt_entry *entry)
+{
+  // FIXME: do this
+  void *frame_addr = frame_get_kernel_addr (entry->frame);
+  memset (frame_addr, 0, PG_SIZE);
+}
 
 static hash_address (const struct hash_elem *e, void *aux UNUSED)
 {
@@ -133,11 +161,8 @@ static page_less (const struct hash_elem *a, const struct hash_elem *b, void *au
     return pg_no (a->user_addr) < pg_no (b->user_addr);
 }
 
-page_init (void)
-{
-  hash_init (&aux_pt, hash_address, page_less, NULL);
-  lock_init (&aux_pt_lock);
-}
+
+static void page_setup (struct aux_pt_entry *entry);
 
 static struct aux_pt_entry *
 page_create_entry (void *vaddr, uint32_t *pd)
@@ -150,7 +175,6 @@ page_create_entry (void *vaddr, uint32_t *pd)
       lock_acquire (&aux_pt_lock);
       hash_insert (&aux_pt, record->elem); 
       lock_release (&aux_pt_lock);
-      record->is_loaded = false;
       // FIXME: register page with thread for cleanup
     }
   return record;
@@ -181,15 +205,21 @@ page_register_page (void *user_vaddr, page_type page_mode)
 
 /* Right now just returns our internal struct. Might want to clean this interface. */
 struct aux_pt_entry
-page_lookup_entry (void *user_vaddr, uint32_t *pd)
+page_lookup_entry (void *user_vaddr)
 {
-  struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = pd };
+  struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = thread_current ()->pd };
   
   struct hash_elem *result = hash_find(&aux_pt, &query->elem);
   if (result != NULL)
     return hash_entry (&result->elem, aux_pt_entry, elem);
   else
     PANIC ("no page found under 0x%x", vaddr); 
+}
+
+static bool 
+page_is_resident (struct aux_pt_entry *entry)
+{
+  return pagedir_get_page (entry->pd, entry->user_addr) != NULL;
 }
 
 static bool 
@@ -203,14 +233,3 @@ page_destroy_entry (struct aux_pt_entry *entry)
   else if (entry->is
 }
 
-bool
-page_reload_page (void *user_vaddr)
-{
-  uint32_t pd = current_thread ()->pd;
-
-  if (page_lookup (page buser_vaddr))
-    {
-      /* then we need to proceed according to the page's swap strategy. */
-      
-    }
-}

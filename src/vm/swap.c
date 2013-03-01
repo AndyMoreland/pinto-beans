@@ -2,80 +2,73 @@
 #include <devices/block.h>
 #include <bitmap.h>
 #include <debug.h>
+#include <threads/synch.h>
 #include "swap.h"
 
 #define SWAP_FULL ((block_sector_t)-1)
+#define NO_SWAP SWAP_FULL
+
 static struct block *swap_get_device (void);
-static block_sector_t swap_get_available_sector (void);
+static block_sector_t swap_get_available_sectors (size_t count);
 static size_t swap_num_sectors (size_t frame_size);
 
 static struct bitmap *swap_used_slots;
+static struct lock swap_used_slots_lock;
 
 void
 swap_init (void)
 {
-  swap_used_slots = bitmap_create (block_size (get_swap_deivce ()));
+  swap_used_slots = bitmap_create (block_size (swap_get_device ()));
+  lock_init (&swap_used_slots_lock);
   if (!swap_used_slots)
     PANIC ("unable to create swap_used_slots");
   bitmap_set_all (swap_used_slots, false);
 }
 
-swapd
+swap_descriptor
 swap_write (const void *frame_start, size_t frame_size)
 {
   size_t num_sectors = swap_num_sectors (frame_size);
-  struct sector_list s_list;
-  size_t s;
+  size_t swap_start = swap_get_available_sectors (SWAP_MAX_SECTORS);
+  if (swap_start == SWAP_FULL)  
+    PANIC ("no available swap slots");
 
+  size_t s;
   for (s = 0; s < num_sectors; ++s)
     {
-      block_sector_t sector = swap_get_available_sector ();
-      if (sector == SWAP_FULL)
-        PANIC ("no available swap slots [found %d of %d]", (int)s, (int)sectors);
-
-      block_write (swap_get_device (), sector, (char *)frame_start + s * BLOCK_SECTOR_SIZE);
-      s_list.sectors[s] = sector;
+      block_write (swap_get_device (), swap_start + s, (char *)frame_start + s * BLOCK_SECTOR_SIZE);
     }
 
-  for (; s < SWAP_MAX_SECTORS; ++s)
-    s_list.sectors[s] = SWAP_FULL;
-
-  return s_list;
+  return (swap_descriptor) swap_start;
 }
 
 size_t
-swap_read (void *frame_start, swapd swap_descriptor, size_t bufsize)
+swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
 {
   size_t num_sectors = swap_num_sectors (bufsize);
+  block_sector_t swap_start = sd;
+
+  ASSERT (num_sectors == SWAP_MAX_SECTORS);
+  ASSERT (bitmap_all (swap_used_slots, swap_start, num_sectors));
+
   char *cursor = (char *)frame_start;
 
-  for (size_t s = 0; s < num_sectors && ; ++s)
+  size_t s;
+  for (s = 0; s < num_sectors; ++s)
   {
-    block_sector_t sector = swap_descriptor.sectors[s];
-    if (sector == SWAP_FULL)
-      break;
-
-    ASSERT (bitmap_test (swap_used_slots, sector));
-    block_read (swap_get_device (), sector, cursor);
-    bitmap_set (swap_used_slots, sector, false);
+    block_read (swap_get_device (), swap_start + s, cursor);
     cursor += BLOCK_SECTOR_SIZE;
   }
+  bitmap_set_multiple (swap_used_slots, swap_start, num_sectors, false);
 
   return cursor - (char *)frame_start;
 }
 
 void 
-swap_clear (swapd swap_descriptor)
+swap_clear (swap_descriptor sd)
 {
-  for (size_t s = 0; s < num_sectors && ; ++s)
-  {
-    block_sector_t sector = swap_descriptor.sectors[s];
-    if (sector == SWAP_FULL)
-      break;
-
-    ASSERT (bitmap_test (swap_used_slots, sector));
-    bitmap_set (swap_used_slots, sector, false);
-  }
+  ASSERT (bitmap_all (swap_used_slots, sd, SWAP_MAX_SECTORS));
+  bitmap_set_multiple (swap_used_slots, sd, SWAP_MAX_SECTORS, false);
 }
 
 static size_t
@@ -83,7 +76,7 @@ swap_num_sectors (size_t frame_size)
 {
   ASSERT (frame_size % BLOCK_SECTOR_SIZE == 0);
   size_t count = frame_size / BLOCK_SECTOR_SIZE;
-  ASSERT (count >= 0 && count <= SWAP_MAX_SECTORS);
+  ASSERT (count <= SWAP_MAX_SECTORS);
   return count;
 }
 
@@ -94,10 +87,12 @@ swap_get_device (void)
 }
 
 static block_sector_t 
-swap_get_available_sector (void)
+swap_get_available_sectors (size_t count)
 {
   // look for 1 consecutive 'false' starting at 0
-  size_t free = bitmap_scan_and_flip (swap_used_slots, 0, 1, false)
+  lock_acquire (&swap_used_slots_lock);
+  size_t free = bitmap_scan_and_flip (swap_used_slots, 0, count, false);
+  lock_release (&swap_used_slots_lock);
   return free != BITMAP_ERROR? free : SWAP_FULL;
 }
 
