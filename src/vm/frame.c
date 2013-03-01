@@ -11,30 +11,31 @@
 #include <debug.h>
 #include <list.h>
 #include <threads/synch.h>
+#include <threads/palloc.h>
+#include <threads/malloc.h>
 #include "frame.h"
 
 struct frame_table_entry
-{
-  void *frame_addr;
-  void *user_addr;
-  uint32_t *pd;
-  struct lock pin_lock;
-  struct list_elem frame_table_elem;
-}
+  {
+    void *frame_addr;
+    void *user_addr;
+    uint32_t *pd;
+    struct lock pin_lock;
+    struct list_elem frame_table_elem;
+  };
 
-static frame_table_entry *clock_hand;
+static struct frame_table_entry *clock_hand;
 static struct list frame_table;
 static struct lock frame_table_lock;
 
-static frame_table_entry *frame_entry (frame_id id);
-static frame_table_entry *frame_create_entry (void *vaddr, uint32_t *pd, void *frame);
+static struct frame_table_entry *frame_entry (frame_id id);
+static struct frame_table_entry *frame_create_entry (void *vaddr, uint32_t *pd, void *frame);
 static void advance_clock_hand (void);
 
 void frame_unpin (frame_id frame);
 
-void frame_init (size_t num_user_pages) 
+void frame_init (size_t num_user_pages UNUSED)
 {
-  max_frames = num_user_pages;
   clock_hand = NULL;
   list_init (&frame_table);
   lock_init (&frame_table_lock);
@@ -83,7 +84,7 @@ void
 frame_release_frame (frame_id frame)
 {
   ASSERT (frame);
-  frame_table_entry *entry = frame_entry (frame);
+  struct frame_table_entry *entry = frame_entry (frame);
   lock_acquire (&frame_table_lock);
   if (clock_hand == entry)
     {
@@ -97,18 +98,18 @@ frame_release_frame (frame_id frame)
   free (entry);
 }
 
-static frame_table_entry *
+static struct frame_table_entry *
 frame_entry (frame_id id)
 {
-  return (frame_table_entry *)id;
+  return (struct frame_table_entry *)id;
 }
 
-static frame_table_entry *
+static struct frame_table_entry *
 frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
 {
   struct frame_table_entry *entry = malloc (sizeof (struct frame_table_entry));
   entry->frame_addr = frame;
-  entry->user_vaddr = vaddr;
+  entry->user_addr = vaddr;
   entry->pd = pd;
   lock_init (&entry->pin_lock);
   lock_acquire (&entry->pin_lock);
@@ -121,3 +122,10 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   return entry;
 }
 
+static void 
+advance_clock_hand (void)
+{
+  lock_acquire (&frame_table_lock);
+  // FIXME: clock
+  lock_release (&frame_table_lock);
+}
