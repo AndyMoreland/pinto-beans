@@ -8,9 +8,8 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+Alex Ryan <alexryan@stanford.edu>
+Andy Moreland <andymo@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -21,9 +20,8 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+Alex Ryan: 
+Andy Moreland: 
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course

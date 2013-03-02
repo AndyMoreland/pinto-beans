@@ -12,28 +12,32 @@
 #include "threads/synch.h"
 #include "userprog/process.h"
 #include "devices/shutdown.h"
+#include "vm/page.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
 
 static void syscall_handler (struct intr_frame *);
-static void syscall_halt (struct intr_frame *f);
-static void syscall_exit (struct intr_frame *f);
-static void syscall_exec (struct intr_frame *f);
-static void syscall_wait (struct intr_frame *f);
-static void syscall_create (struct intr_frame *f);
-static void syscall_remove (struct intr_frame *f);
-static void syscall_open (struct intr_frame *f);
-static void syscall_filesize (struct intr_frame *f);
-static void syscall_read (struct intr_frame *f);
-static void syscall_write (struct intr_frame *f);
-static void syscall_seek (struct intr_frame *f);
-static void syscall_tell (struct intr_frame *f);
-static void syscall_close (struct intr_frame *f);
+static void syscall_halt (struct intr_frame *f, struct list *pin_list);
+static void syscall_exit (struct intr_frame *f, struct list *pin_list);
+static void syscall_exec (struct intr_frame *f, struct list *pin_list);
+static void syscall_wait (struct intr_frame *f, struct list *pin_list);
+static void syscall_create (struct intr_frame *f, struct list *pin_list);
+static void syscall_remove (struct intr_frame *f, struct list *pin_list);
+static void syscall_open (struct intr_frame *f, struct list *pin_list);
+static void syscall_filesize (struct intr_frame *f, struct list *pin_list);
+static void syscall_read (struct intr_frame *f, struct list *pin_list);
+static void syscall_write (struct intr_frame *f, struct list *pin_list);
+static void syscall_seek (struct intr_frame *f, struct list *pin_list);
+static void syscall_tell (struct intr_frame *f, struct list *pin_list);
+static void syscall_close (struct intr_frame *f, struct list *pin_list);
 static void syscall_do_close (int fd_id);
 
-static bool syscall_verify_pointer (void *vaddr);
-static bool syscall_verify_pointer_offset (void *vaddr, size_t offset);
+static bool syscall_verify_pointer (void *vaddr, struct list *pin_list);
+static bool syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list);
+
+static bool syscall_potentially_track_pin (void *uaddr, struct list *pin_list);
+static void syscall_cleanup_pins_and_exit (int message, struct list *pin_list);
 
 struct file_descriptor {
   struct list_elem elem;
@@ -41,6 +45,10 @@ struct file_descriptor {
   int fd_id;
 };
 
+struct pinned_page {
+  void *uaddr;
+  struct list_elem elem;
+};
 
 /* Return a new FD ID for the current thread. Starts at FIRST_FD_ID.  */
 static int
@@ -129,22 +137,23 @@ syscall_init (void)
 
 /* Verifies that vaddr is within user memory and also mapped to a page */
 static bool
-syscall_verify_address (void *vaddr)
+syscall_verify_address (void *vaddr, struct list *pin_list)
 {
-  /* FIXME: SERIOUS BUG: this doesn't unpin things when we're done. */
-  struct thread *t = thread_current ();
-  return is_user_vaddr (vaddr) 
-    && page_in_and_pin (vaddr);
+
+  
+  
+  return is_user_vaddr (vaddr)
+    && syscall_potentially_track_pin (pg_round_down (vaddr), pin_list);
 }
 
 /* Verifies that the given pointer points to valid memory.
    Checks the address and 4 bytes after the address. */
 static bool
-syscall_verify_pointer (void *vaddr) 
+syscall_verify_pointer (void *vaddr, struct list *pin_list) 
 {
   /* Check if vaddr is within user address space
      and belongs to a mapped page. */
-  return syscall_verify_address (vaddr) && syscall_verify_pointer_offset (vaddr, sizeof (void *));
+  return syscall_verify_address (vaddr, pin_list) && syscall_verify_pointer_offset (vaddr, sizeof (void *), pin_list);
 }
 
 /* Verifies that the given pointer offset by `offset` points to a valid
@@ -152,31 +161,31 @@ syscall_verify_pointer (void *vaddr)
    Iterates over all pages that are spanned by the offset and makes sure they
    are mapped. */
 static bool
-syscall_verify_pointer_offset (void *vaddr, size_t offset)
+syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list)
 {
   bool result = true;
   size_t offset_tmp;
   for (offset_tmp = PGSIZE; offset_tmp < offset; offset_tmp += PGSIZE)
-    result = result && syscall_verify_address ((char *) vaddr + offset_tmp);
-  return result && syscall_verify_address ((char *) vaddr + offset);
+    result = result && syscall_verify_address ((char *) vaddr + offset_tmp, pin_list);
+  return result && syscall_verify_address ((char *) vaddr + offset, pin_list);
 }
 
 /* Makes *buffer point to the arg_number'th arg.
    arg_number = 0 returns interrupt number.
    Verifies that the pointer is valid. */
 static bool
-syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer)
+syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer, struct list *pin_list)
 {
   void *pointer = (void *)((char *)f->esp + sizeof (char *) * arg_number);
   *buffer = pointer;
-  return syscall_verify_pointer (pointer);
+  return syscall_verify_pointer (pointer, pin_list);
 }
 
 /* Iterates over the characters in the given string buffer.
    Ensures that all bytes are mapped (intelligently) and 
    in user memory. */
 static bool
-syscall_verify_string (char *str)
+syscall_verify_string (char *str, struct list *pin_list)
 {
   struct thread *t = thread_current ();
 
@@ -185,6 +194,8 @@ syscall_verify_string (char *str)
   void *previous_page_start = pg_round_down (cursor);
   bool valid = is_user_vaddr (cursor) && cur_page != NULL;
   
+  syscall_potentially_track_pin (pg_round_down (cursor), pin_list);
+
   while (valid && *cursor != '\0')
     {
       cursor++;
@@ -192,6 +203,7 @@ syscall_verify_string (char *str)
         {
           cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
           previous_page_start = cursor;
+          syscall_potentially_track_pin (pg_round_down (cursor), pin_list);
         }
       valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
     }
@@ -199,70 +211,120 @@ syscall_verify_string (char *str)
   return valid;
 }
 
+static bool
+syscall_potentially_track_pin (void *uaddr, struct list *pin_list)
+{
+  struct list_elem *e;
+  if (!list_empty (pin_list))
+    {
+      for (e = list_begin (pin_list); e != list_end (pin_list);
+           e = list_next (e))
+        {
+          struct pinned_page *cursor = list_entry (e, struct pinned_page, elem);
+          if (cursor->uaddr == pg_round_down(uaddr))
+            return true;
+        }
+    }
+  if (page_in_and_pin (pg_round_down (uaddr)))
+    {
+      struct pinned_page *pp = malloc (sizeof (struct pinned_page));
+      pp->uaddr = pg_round_down (uaddr);
+      list_push_front (pin_list, &pp->elem);
+      return true;
+    } 
+  else
+    {
+      return false;
+    }
+}
+
+static void
+syscall_cleanup_pins (struct list *pin_list)
+{
+  while (!list_empty (pin_list))
+    {
+      struct pinned_page *pp = list_entry (list_pop_front (pin_list), struct pinned_page, elem);
+      page_unpin (pg_round_down (pp->uaddr));
+      free (pp);
+    }
+}
+
+static void
+syscall_cleanup_pins_and_exit (int message, struct list *pin_list)
+{
+  syscall_cleanup_pins (pin_list);
+  thread_exit_with_message (message);
+}
+
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  struct list pin_list;
+  list_init (&pin_list);
+
   int *interrupt_number;
-  if (!syscall_pointer_to_arg (f, 0, (void **) &interrupt_number))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 0, (void **) &interrupt_number, &pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, &pin_list);
 
   switch (*interrupt_number) 
     {
     case SYS_HALT:
-      syscall_halt (f);
+      syscall_halt (f, &pin_list);
       break;
 
     case SYS_EXIT:
-      syscall_exit (f);
+      syscall_exit (f, &pin_list);
       break;
 
     case SYS_EXEC:
-      syscall_exec (f);
+      syscall_exec (f, &pin_list);
       break;
 
     case SYS_WAIT:
-      syscall_wait (f);
+      syscall_wait (f, &pin_list);
       break;
 
     case SYS_CREATE:
-      syscall_create (f);
+      syscall_create (f, &pin_list);
       break;
 
     case SYS_REMOVE:
-      syscall_remove (f);
+      syscall_remove (f, &pin_list);
       break;
 
     case SYS_OPEN:
-      syscall_open (f);
+      syscall_open (f, &pin_list);
       break;
 
     case SYS_FILESIZE:
-      syscall_filesize (f);
+      syscall_filesize (f, &pin_list);
       break;
 
     case SYS_READ:
-      syscall_read (f);
+      syscall_read (f, &pin_list);
       break;
 
     case SYS_WRITE:
-      syscall_write (f);
+      syscall_write (f, &pin_list);
       break;
 
     case SYS_SEEK:
-      syscall_seek (f);
+      syscall_seek (f, &pin_list);
       break;
 
     case SYS_TELL:
-      syscall_tell (f);
+      syscall_tell (f, &pin_list);
       break;
 
     case SYS_CLOSE:
-      syscall_close (f);
+      syscall_close (f, &pin_list);
       break;
     default:
-      thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+      syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, &pin_list);
       break;
     }
+
+  syscall_cleanup_pins (&pin_list);
 }
 
 /* Below are syscalls.
@@ -274,16 +336,16 @@ syscall_handler (struct intr_frame *f)
    whatever what they delegate to returns. */
 
 static void
-syscall_create (struct intr_frame *f)
+syscall_create (struct intr_frame *f, struct list *pin_list)
 {
   char **file;
   unsigned *initial_size;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &file)
-      || !syscall_verify_pointer (*file)
-      || !syscall_verify_string (*file)
-      || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &file, pin_list)
+      /* || !syscall_verify_pointer (*file) */
+      || !syscall_verify_string (*file, pin_list)
+      || !syscall_pointer_to_arg (f, 2, (void **) &initial_size, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
   
   lock_acquire (&fs_lock);
   f->eax = filesys_create (*file, *initial_size);
@@ -291,14 +353,14 @@ syscall_create (struct intr_frame *f)
 }
 
 static void
-syscall_open (struct intr_frame *f) {
+syscall_open (struct intr_frame *f, struct list *pin_list) {
   char **name;
   struct file_descriptor *fd = NULL;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &name)
-      || !syscall_verify_pointer (*name)
-      || !syscall_verify_string (*name))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name, pin_list)
+      || !syscall_verify_pointer (*name, pin_list)
+      || !syscall_verify_string (*name, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
   
   lock_acquire (&fs_lock);
   if (*name != NULL)
@@ -327,23 +389,23 @@ syscall_do_close (int fd_id)
 }
 
 static void
-syscall_close (struct intr_frame *f)
+syscall_close (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   syscall_do_close (*fd_id);
 }
 
 static void
-syscall_remove (struct intr_frame *f)
+syscall_remove (struct intr_frame *f, struct list *pin_list)
 {
   char **name;
-  if (!syscall_pointer_to_arg (f, 1, (void **) &name)
-      || !syscall_verify_string (*name))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &name, pin_list)
+      || !syscall_verify_string (*name, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*name != NULL)
     {
@@ -354,12 +416,12 @@ syscall_remove (struct intr_frame *f)
 }
 
 static void
-syscall_filesize (struct intr_frame *f)
+syscall_filesize (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
@@ -372,17 +434,17 @@ syscall_filesize (struct intr_frame *f)
 }
 
 static void
-syscall_write (struct intr_frame *f)
+syscall_write (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
   void **buffer;
   unsigned *size;
   
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
-      || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
-      || !syscall_pointer_to_arg (f, 3, (void **) &size)
-      || !syscall_verify_pointer_offset (*buffer, *size))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
+      || !syscall_pointer_to_arg (f, 2, (void **) &buffer, pin_list)
+      || !syscall_pointer_to_arg (f, 3, (void **) &size, pin_list)
+      || !syscall_verify_pointer_offset (*buffer, *size, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*fd_id == STDOUT_FILENO)
     {
@@ -403,17 +465,17 @@ syscall_write (struct intr_frame *f)
 }
 
 static void
-syscall_read (struct intr_frame *f)
+syscall_read (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
   void **buffer;
   unsigned *size;
   
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
-      || !syscall_pointer_to_arg (f, 2, (void **) &buffer)
-      || !syscall_pointer_to_arg (f, 3, (void **) &size)
-      || !syscall_verify_pointer_offset (*buffer, *size))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
+      || !syscall_pointer_to_arg (f, 2, (void **) &buffer, pin_list)
+      || !syscall_pointer_to_arg (f, 3, (void **) &size, pin_list)
+      || !syscall_verify_pointer_offset (*buffer, *size, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*fd_id == STDIN_FILENO)
     {
@@ -438,14 +500,14 @@ syscall_read (struct intr_frame *f)
 }
 
 static void
-syscall_seek (struct intr_frame *f)
+syscall_seek (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
   int *position;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
-      || !syscall_pointer_to_arg (f, 2, (void **) &position))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
+      || !syscall_pointer_to_arg (f, 2, (void **) &position, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
@@ -456,12 +518,12 @@ syscall_seek (struct intr_frame *f)
 }
 
 static void
-syscall_tell (struct intr_frame *f)
+syscall_tell (struct intr_frame *f, struct list *pin_list)
 {
   int *fd_id;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
   
@@ -476,40 +538,40 @@ syscall_tell (struct intr_frame *f)
 }
 
 static void 
-syscall_exit (struct intr_frame *f)
+syscall_exit (struct intr_frame *f, struct list *pin_list)
 {
   int *exit_number;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &exit_number))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &exit_number, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
-  thread_exit_with_message (*exit_number);
+  syscall_cleanup_pins_and_exit (*exit_number, pin_list);
 }
 
 static void
-syscall_halt (struct intr_frame *f UNUSED)
+syscall_halt (struct intr_frame *f UNUSED, struct list *pin_list UNUSED)
 {
   shutdown_power_off ();
 }
 
 static void
-syscall_exec (struct intr_frame *f)
+syscall_exec (struct intr_frame *f, struct list *pin_list)
 {
   char **cmdline;
-  if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline)
-      || !syscall_verify_string (*cmdline))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline, pin_list)
+      || !syscall_verify_string (*cmdline, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   f->eax = process_execute (*cmdline);
 }
 
 static void
-syscall_wait (struct intr_frame *f)
+syscall_wait (struct intr_frame *f, struct list *pin_list)
 {
   int *pid;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &pid))
-    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  if (!syscall_pointer_to_arg (f, 1, (void **) &pid, pin_list))
+    syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   f->eax = process_wait (*pid);
 }

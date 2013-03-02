@@ -5,8 +5,10 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "vm/page.h"
+#include "threads/vaddr.h"
 
 #define STACK_GROWTH_TOLERANCE 64
+#define MAX_STACK_SIZE (1024 * 1024)
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -161,26 +163,33 @@ page_fault (struct intr_frame *f)
 
   if (!not_present && user)
     kill (f);
+  
+  if (!is_user_vaddr (fault_addr))
+    kill (f);
+
   else if (not_present)
     {
       if (!page_in (fault_addr))
         {
-          struct thread *t = thread_current ();
           void *esp = f->esp;
 
-          if (page_exists (esp, t->pd))
-            return;
-  
-          if (pg_ofs (esp) < PG_SIZE - STACK_GROWTH_TOLERANCE)
-            {
-              thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
-              return;
-            }
+          /* Need to make sure that we don't grow if we're waaaaaay too far down -- 
+             we're only checking that we're close to the ESP right now */
+          
+          /* Technically will grow up to 64 away -- FIXME */
+          printf ("%p, %p, %p, %llu, %llu, %llu\n", esp, fault_addr, PHYS_BASE, 
+                  ((int64_t) esp - (int64_t) fault_addr), ((int64_t) fault_addr - (int64_t) esp), 
+                  ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE));
 
-          if (page_exists (pg_round_up (esp), t->pd))
-            page_create_swap_page (pg_round_down (esp), true, true);
+          if (((int64_t) esp - (int64_t) fault_addr < (int64_t) STACK_GROWTH_TOLERANCE)
+              || ((int64_t) fault_addr > (int64_t) esp))
+            {
+              if ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE > (int64_t) fault_addr)
+                kill (f);
+              page_create_swap_page (pg_round_down (fault_addr), true, true);
+            }
           else
-            thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+            kill (f);
         }
     }
   else
