@@ -98,7 +98,6 @@ page_free_page (struct list_elem *elem)
 {
   struct aux_pt_entry *entry = list_entry (elem, struct aux_pt_entry, thread_pages_elem);
 
-  printf (">> freeing page %p\n", entry->user_addr);
   list_remove (elem);
   lock_acquire (&aux_pt_lock);
   hash_delete (&aux_pt, &entry->elem);
@@ -269,7 +268,6 @@ page_create_entry (void *vaddr)
       lock_release (&aux_pt_lock);
       // FIXME: register page with thread for cleanup
       list_push_back (&thread_current ()->pages_list, &record->thread_pages_elem);
-      printf (">> added page %p\n", vaddr);
     }
   return record;
 }
