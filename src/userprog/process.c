@@ -330,8 +330,6 @@ process_exit (void)
   
   /* Decrement refcount on thread's pdata, release sema */
   pdata_on_exit (cur);
-//  while (!list_empty (&cur->pages_list))
-//    page_free_page (list_front (&cur->pages_list));
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -347,6 +345,8 @@ process_exit (void)
          that's been freed (and cleared). */
       cur->pagedir = NULL;
       pagedir_activate (NULL);
+      while (!list_empty (&cur->pages_list))
+        page_free_page (list_front (&cur->pages_list));
       pagedir_destroy (pd);
     }
 
