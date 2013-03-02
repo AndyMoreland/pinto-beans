@@ -15,19 +15,24 @@ size_t histogram[256];
 int
 main (int argc UNUSED, char *argv[]) 
 {
+  msg (">> started mothafucka");
   int handle;
   unsigned char *p;
   size_t size;
   size_t i;
 
   quiet = true;
+  msg (">> started mothafucka");
 
   CHECK ((handle = open (argv[1])) > 1, "open \"%s\"", argv[1]);
+  msg (">> have a handle bitch %d", handle);
 
   size = read (handle, buf, sizeof buf);
   for (i = 0; i < size; i++)
     histogram[buf[i]]++;
   p = buf;
+  msg (">> read some shit %d", size); 
+
   for (i = 0; i < sizeof histogram / sizeof *histogram; i++) 
     {
       size_t j = histogram[i];
