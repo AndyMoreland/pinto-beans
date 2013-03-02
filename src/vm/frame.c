@@ -103,10 +103,10 @@ frame_release_frame (frame_id frame)
   list_remove (&entry->frame_table_elem);
   pagedir_clear_page (entry->pd, entry->user_addr);
   lock_release (&frame_table_lock);
-//  palloc_free_page (entry->frame_addr);
-  printf (">> frame_release[%p] -> %p [entry=%p]\n", entry->frame_addr, entry->user_addr, entry);
-
- // free (entry);
+  palloc_free_page (entry->frame_addr);
+  
+  lock_release (&entry->pin_lock);
+  free (entry);
 }
 
 static struct frame_table_entry *
@@ -121,7 +121,6 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   struct frame_table_entry *entry = malloc (sizeof (struct frame_table_entry));
   entry->frame_addr = frame;
   entry->user_addr = vaddr;
-  printf (">> frame_create[%p] -> %p [entry=%p]\n", entry->frame_addr, entry->user_addr, entry);
   entry->pd = pd;
   lock_init (&entry->pin_lock);
   lock_acquire (&entry->pin_lock);
