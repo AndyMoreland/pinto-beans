@@ -345,8 +345,11 @@ process_exit (void)
          that's been freed (and cleared). */
       cur->pagedir = NULL;
       pagedir_activate (NULL);
+      while (!list_empty (&cur->pages_list))
+        page_free_page (list_front (&cur->pages_list));
       pagedir_destroy (pd);
     }
+
 }
 
 /* Sets up the CPU for running user code in the current

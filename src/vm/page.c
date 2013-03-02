@@ -51,7 +51,7 @@ static struct lock aux_pt_lock;
 
 static unsigned hash_address (const struct hash_elem *e, void *aux);
 static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux);
-static struct aux_pt_entry *page_create_entry (void *vaddr, uint32_t *pd);
+static struct aux_pt_entry *page_create_entry (void *vaddr);
 static struct aux_pt_entry *page_lookup_current (void *user_vaddr);
 static struct aux_pt_entry *page_lookup_entry (void *user_vaddr, uint32_t *pd);
 static bool page_is_resident (struct aux_pt_entry *entry);
@@ -77,7 +77,7 @@ page_init (void)
 bool 
 page_create_swap_page (void *vaddr, bool zeroed, bool writable) 
 {
-  struct aux_pt_entry *entry = page_create_entry (vaddr, thread_current ()->pagedir);
+  struct aux_pt_entry *entry = page_create_entry (vaddr);
   if (!entry)
     return false;
 
@@ -94,9 +94,15 @@ page_create_mmap_pages (const char *filename, void *vaddr, bool writable)
 }
 
 void
-page_free_page (void *vaddr)
+page_free_page (struct list_elem *elem)
 {
-  struct aux_pt_entry *entry = page_lookup_current (vaddr);
+  struct aux_pt_entry *entry = list_entry (elem, struct aux_pt_entry, thread_pages_elem);
+
+  printf (">> freeing page %p\n", entry->user_addr);
+  list_remove (elem);
+  lock_acquire (&aux_pt_lock);
+  hash_delete (&aux_pt, &entry->elem);
+  lock_release (&aux_pt_lock);
 
   if (entry->frame != FRAME_INVALID) 
     {
@@ -106,17 +112,22 @@ page_free_page (void *vaddr)
       else if (entry->type == SWAP)
         {
           swap_clear (entry->swap_info);
+          frame_unpin (entry->frame);
         }
       else
         {
           // FIXME: mmap cleanup
+          frame_unpin (entry->frame);
         }
     }
-  lock_acquire (&aux_pt_lock);
-  hash_delete (&aux_pt, &entry->elem);
-  lock_release (&aux_pt_lock);
-  pagedir_clear_page (entry->pd, entry->user_addr);
-  // FIXME: remove from thread's page list
+
+  free (entry);
+}
+
+bool 
+page_exists (void *vaddr, uint32_t *pd)
+{
+  return page_lookup_entry (vaddr, pd) != NULL;
 }
 
 bool
@@ -246,17 +257,19 @@ page_less (const struct hash_elem *ae, const struct hash_elem *be, void *aux UNU
 
 
 static struct aux_pt_entry *
-page_create_entry (void *vaddr, uint32_t *pd)
+page_create_entry (void *vaddr)
 {
   struct aux_pt_entry *record = malloc(sizeof (struct aux_pt_entry));
   if (record)
     {
-      record->pd = pd;
+      record->pd = thread_current ()->pagedir;
       record->user_addr = vaddr;
       lock_acquire (&aux_pt_lock);
       hash_insert (&aux_pt, &record->elem); 
       lock_release (&aux_pt_lock);
       // FIXME: register page with thread for cleanup
+      list_push_back (&thread_current ()->pages_list, &record->thread_pages_elem);
+      printf (">> added page %p\n", vaddr);
     }
   return record;
 }

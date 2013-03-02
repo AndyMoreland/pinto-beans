@@ -134,6 +134,8 @@ struct thread
     struct thread *parent_process;      /* Pointer to parent process. */
 #endif
 
+    struct list pages_list;
+
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
