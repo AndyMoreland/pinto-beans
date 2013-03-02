@@ -330,6 +330,8 @@ process_exit (void)
   
   /* Decrement refcount on thread's pdata, release sema */
   pdata_on_exit (cur);
+//  while (!list_empty (&cur->pages_list))
+//    page_free_page (list_front (&cur->pages_list));
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -347,6 +349,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
 }
 
 /* Sets up the CPU for running user code in the current

@@ -685,6 +685,7 @@ init_thread (struct thread *t, const char *name, int priority, int nice, fixed_p
   list_init (&t->file_descriptors);
   list_init (&t->child_processes);
 #endif
+  list_init (&t->pages_list);
 
   t->magic = THREAD_MAGIC;
 

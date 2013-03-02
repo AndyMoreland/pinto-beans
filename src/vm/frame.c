@@ -102,7 +102,7 @@ frame_release_frame (frame_id frame)
     }
   list_remove (&entry->frame_table_elem);
   palloc_free_page (entry->frame_addr);
-  free (entry);
+  // free (entry);
 }
 
 static struct frame_table_entry *
