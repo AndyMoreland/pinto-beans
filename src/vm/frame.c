@@ -24,16 +24,18 @@ struct frame_table_entry
     void *user_addr;
     uint32_t *pd;
     struct lock pin_lock;
-    struct list_elem frame_table_elem;
+    struct list_elem elem;
   };
 
 static struct frame_table_entry *clock_hand;
 static struct list frame_table;
 static struct lock frame_table_lock;
+static struct list free_list;
 
 static struct frame_table_entry *frame_entry (frame_id id);
 static struct frame_table_entry *frame_create_entry (void *vaddr, uint32_t *pd, void *frame);
 static void advance_clock_hand (void);
+static struct frame_table_entry *clock_evict (void);
 
 void frame_unpin (frame_id frame);
 
@@ -41,6 +43,7 @@ void frame_init (size_t num_user_pages UNUSED)
 {
   clock_hand = NULL;
   list_init (&frame_table);
+  list_init (&free_list);
   lock_init (&frame_table_lock);
 }
 
@@ -59,9 +62,11 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
       clock_hand = entry;
   } else {
     // try to swap
-
-    if (!frame) 
+    entry = clock_evict ();
+    if (!entry)
       PANIC ("no available pages");
+    entry->user_addr = user_vaddr;
+    entry->pd = pd;
   }
 
   return entry;
@@ -100,13 +105,11 @@ frame_release_frame (frame_id frame)
       if (clock_hand == entry)
         clock_hand = NULL;
     }
-  list_remove (&entry->frame_table_elem);
+  list_remove (&entry->elem);
   pagedir_clear_page (entry->pd, entry->user_addr);
-  lock_release (&frame_table_lock);
-  palloc_free_page (entry->frame_addr);
-  
+  list_push_front (&free_list, &entry->elem);
   lock_release (&entry->pin_lock);
-  free (entry);
+  lock_release (&frame_table_lock);
 }
 
 static struct frame_table_entry *
@@ -126,7 +129,7 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   lock_acquire (&entry->pin_lock);
 
   lock_acquire (&frame_table_lock);
-  list_push_back (&frame_table, &entry->frame_table_elem);
+  list_push_back (&frame_table, &entry->elem);
   lock_release (&frame_table_lock);
   
   // don't release pin; responsible for releasing externally
@@ -155,26 +158,39 @@ static struct frame_table_entry *
 clock_evict (void)
 {
   lock_acquire (&frame_table_lock);
-  if (!clock_hand)
-    return NULL;
-  
-  struct frame_table_entry *start = clock_hand;
-  int loop_attempts = 0;
-  while (!frame_try_evict (clock_hand))
-  {
-    advance_clock_hand ();
-    if (clock_hand == start)
+  struct frame_table_entry *entry;
+  if (!list_empty (&free_list))
     {
-      ++loop_attempts;
-      if (loop_attempts == 2)
-        return NULL;
+      entry = list_entry (list_begin (&free_list), struct frame_table_entry, elem);
+      lock_acquire (&entry->pin_lock);
+      list_remove (&entry->elem);
+      list_push_back (&frame_table, &entry->elem);
     }
-  }
-  struct frame_table_entry *evicted = clock_hand;
-  advance_clock_hand ();
+  else if (!clock_hand)   
+    entry = NULL;
+  else
+    {
+      struct frame_table_entry *start = clock_hand;
+      int loop_attempts = 0;
+      while (!frame_try_evict (clock_hand))
+        {
+          advance_clock_hand ();
+          if (clock_hand == start)
+            {
+              ++loop_attempts;
+              if (loop_attempts == 2)
+                {
+                  lock_release (&frame_table_lock);
+                  return NULL;
+                }
+            }
+        }
+      entry = clock_hand;
+      advance_clock_hand ();
+    }
+
   lock_release (&frame_table_lock);
-   
-  return evicted;
+  return entry;
 }
 
 static void 
@@ -184,11 +200,11 @@ advance_clock_hand (void)
     clock_hand = NULL;
   else 
     {
-      clock_hand = list_entry (list_next (&clock_hand->frame_table_elem),
-        struct frame_table_entry, frame_table_elem);
+      clock_hand = list_entry (list_next (&clock_hand->elem),
+        struct frame_table_entry, elem);
         
-      if (&clock_hand->frame_table_elem == list_end (&frame_table))
+      if (&clock_hand->elem == list_end (&frame_table))
         clock_hand = list_entry (list_begin (&frame_table),
-          struct frame_table_entry, frame_table_elem);
+          struct frame_table_entry, elem);
     }
 }

@@ -163,7 +163,7 @@ page_fault (struct intr_frame *f)
     {
       if (!page_in (fault_addr))
       {
-        printf ("killing you because you're stupid: %s\n", thread_current ()->name);
+//        printf ("killing you because you're stupid: %s\n", thread_current ()->name);
         kill (f);
       }
     }
