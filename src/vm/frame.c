@@ -141,14 +141,14 @@ frame_try_evict (struct frame_table_entry *entry)
 {
   if (!lock_try_acquire (&entry->pin_lock))
     return false;
-  else if (!pagedir_is_dirty (entry->pd, entry->user_addr))
+  else if (!pagedir_is_accessed (entry->pd, entry->user_addr))
     {
       page_out (entry->user_addr, entry->pd);
       return true;
     }
   else 
     {
-      pagedir_set_dirty (entry->pd, entry->user_addr, false);
+      pagedir_set_accessed (entry->pd, entry->user_addr, false);
       lock_release (&entry->pin_lock);
       return false;
     }

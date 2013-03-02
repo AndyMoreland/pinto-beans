@@ -82,10 +82,23 @@ page_create_swap_page (void *vaddr, bool zeroed, bool writable)
   if (!entry)
     return false;
 
-  entry->frame = FRAME_INVALID;
   entry->type = zeroed? SWAP_ZERO_INIT : SWAP;
   entry->writable = writable;
   return true;
+}
+
+static void
+page_possibly_write_mmap (struct aux_pt_entry *entry)
+{
+  if (entry->type == MMAP && entry->writable && 
+      pagedir_is_dirty (entry->pd, entry->user_addr))
+    {
+      void *kaddr = frame_get_kernel_addr (entry->frame);
+      lock_acquire (&fs_lock);
+      file_write_at (entry->mmap_info.fd, kaddr, 
+        entry->mmap_info.len,  entry->mmap_info.offset);
+      lock_release (&fs_lock);
+    }
 }
 
 void
@@ -102,43 +115,86 @@ page_free_page (struct list_elem *elem)
     {
       frame_pin (entry->frame);
       if (page_is_resident (entry))
-        frame_release_frame (entry->frame);
+        {
+          page_possibly_write_mmap (entry);
+          frame_release_frame (entry->frame);
+        }
       else
         {
           frame_unpin (entry->frame); 
-          switch (entry->type)
-            {
-            case SWAP: case SWAP_ZERO_INIT:
-              swap_clear (entry->swap_info);
-              break;
-            case MMAP:
-              // FIXME: mmap cleanup
-              break;
-            }
+          swap_clear (entry->swap_info);
         }
     }
-  
 
   free (entry);
+}
+
+static bool 
+page_munmap_page_range (void *start_vaddr, unsigned count, struct file *fd)
+{
+  int8_t *start = start_vaddr;
+  unsigned i;
+  for (i = 0; i < count; ++i)
+    {
+      void *vaddr = start + i * PGSIZE;
+      struct aux_pt_entry *entry = page_lookup_current (vaddr);
+      if (!entry || entry->type != MMAP || entry->mmap_info.fd != fd)
+        return false;
+      page_free_page (&entry->thread_pages_elem);
+    }
+  return true;
 }
 
 uint32_t 
 page_create_mmap_pages (struct file *fd_raw, void *vaddr, bool writable)
 {
+  lock_acquire (&fs_lock);
   struct file *fd = file_reopen (fd_raw);
   off_t len = file_length (fd);
-  off_t off = 0; 
+  lock_release (&fs_lock);
+  off_t pages;
  
-  while (off < len)
+  for (pages = 0; pages == 0 || pages * PGSIZE < len; ++pages)
     {
-       
+      void *cursor = (int8_t *)vaddr + pages * PGSIZE;
+      if (page_exists (cursor, thread_current ()->pagedir))
+        { 
+          page_munmap_page_range (vaddr, pages, fd);
+          lock_acquire (&fs_lock);
+          file_close (fd);
+          lock_release (&fs_lock);
+          return -1;
+        }
 
+      struct aux_pt_entry *entry = page_create_entry (cursor);
+      entry->type = MMAP;
+      entry->writable = writable;
+      entry->mmap_info.offset = pages * PGSIZE;
+      entry->mmap_info.len = len - pages * PGSIZE;
+      if (entry->mmap_info.len > PGSIZE)
+        entry->mmap_info.len = PGSIZE;
+      entry->mmap_info.fd = fd;
     }
+
+  return (uint32_t) vaddr;
 }
 
 bool page_munmap_pages (uint32_t mmapid)
 {
+  void *vaddr = (void *)mmapid;
+  if (pg_round_down (vaddr) != vaddr)
+    return false;
 
+  struct aux_pt_entry *entry = page_lookup_current (vaddr);
+  if (!entry || entry->type != MMAP || entry->mmap_info.offset)
+    return false;
+
+  lock_acquire (&fs_lock);
+  unsigned count = (file_length (entry->mmap_info.fd) + PGSIZE - 1) / PGSIZE;
+  lock_release (&fs_lock);
+  if (!count) // empty files
+    count = 1;
+  return page_munmap_page_range (vaddr, count, entry->mmap_info.fd);
 }
 
 bool 
@@ -244,7 +300,11 @@ page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
       }
     break;
   case MMAP:
-    // FIXME: setup mmap shenanigans 
+    lock_acquire (&fs_lock);
+    off_t bytes = file_read_at (entry->mmap_info.fd, frame_addr,
+      entry->mmap_info.len, entry->mmap_info.offset);
+    lock_release (&fs_lock);
+    memset ((int8_t *)frame_addr + bytes, 0, PGSIZE - bytes);
     break;
   default:
     PANIC ("unrecognized page type %d", entry->type);
@@ -280,8 +340,8 @@ page_create_entry (void *vaddr)
       lock_acquire (&aux_pt_lock);
       hash_insert (&aux_pt, &record->elem); 
       lock_release (&aux_pt_lock);
-      // FIXME: register page with thread for cleanup
       list_push_back (&thread_current ()->pages_list, &record->thread_pages_elem);
+      record->frame = FRAME_INVALID;
     }
   return record;
 }

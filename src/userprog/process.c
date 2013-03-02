@@ -673,7 +673,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
 //          palloc_free_page (kpage);
-          page_free_page (upage);
           return false; 
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
