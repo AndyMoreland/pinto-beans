@@ -40,7 +40,8 @@ struct aux_pt_entry
   union {
     struct {
       size_t offset;
-      struct mmap_descriptor *md;
+      size_t len;
+      struct file *fd;
     } mmap_info;
     swap_descriptor swap_info;
   };
@@ -83,14 +84,8 @@ page_create_swap_page (void *vaddr, bool zeroed, bool writable)
 
   entry->frame = FRAME_INVALID;
   entry->type = zeroed? SWAP_ZERO_INIT : SWAP;
-  entry->writable = true;
+  entry->writable = writable;
   return true;
-}
-
-bool 
-page_create_mmap_pages (const char *filename, void *vaddr, bool writable)
-{
-  // FIXME: todo
 }
 
 void
@@ -108,19 +103,42 @@ page_free_page (struct list_elem *elem)
       frame_pin (entry->frame);
       if (page_is_resident (entry))
         frame_release_frame (entry->frame);
-      else if (entry->type == SWAP)
-        {
-          swap_clear (entry->swap_info);
-          frame_unpin (entry->frame);
-        }
       else
         {
-          // FIXME: mmap cleanup
-          frame_unpin (entry->frame);
+          frame_unpin (entry->frame); 
+          switch (entry->type)
+            {
+            case SWAP: case SWAP_ZERO_INIT:
+              swap_clear (entry->swap_info);
+              break;
+            case MMAP:
+              // FIXME: mmap cleanup
+              break;
+            }
         }
     }
+  
 
   free (entry);
+}
+
+uint32_t 
+page_create_mmap_pages (struct file *fd_raw, void *vaddr, bool writable)
+{
+  struct file *fd = file_reopen (fd_raw);
+  off_t len = file_length (fd);
+  off_t off = 0; 
+ 
+  while (off < len)
+    {
+       
+
+    }
+}
+
+bool page_munmap_pages (uint32_t mmapid)
+{
+
 }
 
 bool 
@@ -146,7 +164,8 @@ page_in (void *vaddr)
 }
 
 /* Pages out the given page. It is assumed that this page is already
- * pinned externally. 
+ * pinned externally. This operation will not release the pin on
+ * the corresponding page.
  */
 void 
 page_out (void *vaddr, uint32_t *pd)
@@ -155,18 +174,17 @@ page_out (void *vaddr, uint32_t *pd)
   ASSERT (entry->frame != FRAME_INVALID);
 
   if (!page_is_resident (entry)) {
+    PANIC ("attempt to page out non-resident page");
     frame_unpin (entry->frame);
     return;
   }
   
-  printf (">> paging out %p\n", vaddr);
   pagedir_clear_page (entry->pd, entry->user_addr);
   if (entry->type == SWAP || entry->type == SWAP_ZERO_INIT)
     {
       // FIXME: locking - page trying to be swapped out already, etc  
       void *frame_addr = frame_get_kernel_addr (entry->frame);
       entry->swap_info = swap_write (frame_addr, PGSIZE);
-      printf (">> created swap at %u\n", entry->swap_info);
     } 
   else 
     { // mmap
@@ -206,10 +224,8 @@ void page_unpin (void *user_vaddr)
 static void 
 page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
 {
-  // FIXME: do this
   void *frame_addr = frame_get_kernel_addr (new_frame);
   bool first_load = (entry->frame == FRAME_INVALID);
-//  printf (">> setting up contents at %p [frame=%p]\n", frame_addr, frame_get_kernel_addr (entry->frame));
   switch (entry->type) 
   {
   case SWAP_ZERO_INIT:
@@ -218,10 +234,10 @@ page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
       memset (frame_addr, 0, PGSIZE);
       break;
     }
+    // fallthrough
   case SWAP:
     if (!first_load)
       {
-        printf (">> trying to swap in from %u\n", entry->swap_info);
         size_t bytes = swap_read (frame_addr, entry->swap_info, PGSIZE);
         if (bytes != PGSIZE)
           PANIC ("only read %d bytes from frame into 0x%p", (int) bytes, new_frame);
@@ -252,8 +268,6 @@ page_less (const struct hash_elem *ae, const struct hash_elem *be, void *aux UNU
   else
     return pg_no (a->user_addr) < pg_no (b->user_addr);
 }
-
-
 
 static struct aux_pt_entry *
 page_create_entry (void *vaddr)
