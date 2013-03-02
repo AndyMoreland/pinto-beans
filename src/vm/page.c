@@ -148,13 +148,15 @@ page_out (void *vaddr, uint32_t *pd)
     frame_unpin (entry->frame);
     return;
   }
-
+  
+  printf (">> paging out %p\n", vaddr);
   pagedir_clear_page (entry->pd, entry->user_addr);
-  if (entry->type == SWAP) 
+  if (entry->type == SWAP || entry->type == SWAP_ZERO_INIT)
     {
       // FIXME: locking - page trying to be swapped out already, etc  
       void *frame_addr = frame_get_kernel_addr (entry->frame);
       entry->swap_info = swap_write (frame_addr, PGSIZE);
+      printf (">> created swap at %u\n", entry->swap_info);
     } 
   else 
     { // mmap
@@ -197,20 +199,24 @@ page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
   // FIXME: do this
   void *frame_addr = frame_get_kernel_addr (new_frame);
   bool first_load = (entry->frame == FRAME_INVALID);
+//  printf (">> setting up contents at %p [frame=%p]\n", frame_addr, frame_get_kernel_addr (entry->frame));
   switch (entry->type) 
   {
+  case SWAP_ZERO_INIT:
+    if (first_load)
+    {
+      memset (frame_addr, 0, PGSIZE);
+      break;
+    }
   case SWAP:
     if (!first_load)
       {
+        printf (">> trying to swap in from %u\n", entry->swap_info);
         size_t bytes = swap_read (frame_addr, entry->swap_info, PGSIZE);
         if (bytes != PGSIZE)
           PANIC ("only read %d bytes from frame into 0x%p", (int) bytes, new_frame);
       }
     break;
-  case SWAP_ZERO_INIT:
-    if (first_load)
-      memset (frame_addr, 0, PGSIZE);
-    break; 
   case MMAP:
     // FIXME: setup mmap shenanigans 
     break;

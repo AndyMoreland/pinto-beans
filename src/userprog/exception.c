@@ -156,12 +156,22 @@ page_fault (struct intr_frame *f)
             write ? "writing" : "reading",
             user ? "user" : "kernel");
   }
- 
-  // FIXME: probly should kill instead of panic
-  if (!page_in (fault_addr))
-  {
-    printf ("killing you because you're stupid: %s\n", thread_current ()->name);
+
+  if (write && !not_present && user)
     kill (f);
-  }
+  else if (not_present)
+    {
+      if (!page_in (fault_addr))
+      {
+        printf ("killing you because you're stupid: %s\n", thread_current ()->name);
+        kill (f);
+      }
+    }
+  else
+    PANIC ("unhandled page fault at %p: %s error %s page in %s context.\n",
+            fault_addr,
+            not_present ? "not present" : "rights violation",
+            write ? "writing" : "reading",
+            user ? "user" : "kernel");
 }
 

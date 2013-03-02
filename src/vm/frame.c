@@ -70,6 +70,8 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
 void *
 frame_get_kernel_addr (frame_id frame) 
 {
+  if (frame == FRAME_INVALID)
+    return NULL;
   return frame_entry (frame)->frame_addr;
 }
 
