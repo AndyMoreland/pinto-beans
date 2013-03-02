@@ -52,14 +52,15 @@ static struct lock aux_pt_lock;
 static unsigned hash_address (const struct hash_elem *e, void *aux);
 static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux);
 static struct aux_pt_entry *page_create_entry (void *vaddr, uint32_t *pd);
-static struct aux_pt_entry *page_lookup_entry (void *user_vaddr);
+static struct aux_pt_entry *page_lookup_current (void *user_vaddr);
+static struct aux_pt_entry *page_lookup_entry (void *user_vaddr, uint32_t *pd);
 static bool page_is_resident (struct aux_pt_entry *entry);
 static void page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame);
 
 void *
 FIXME_page_get_kernel_addr (void *vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  struct aux_pt_entry *entry = page_lookup_current (vaddr);
   if (!entry || entry->frame == FRAME_INVALID || !page_is_resident (entry))
     return NULL;
   
@@ -74,7 +75,7 @@ page_init (void)
 }
 
 bool 
-page_create_page (void *vaddr, bool zeroed, bool writable) 
+page_create_swap_page (void *vaddr, bool zeroed, bool writable) 
 {
   struct aux_pt_entry *entry = page_create_entry (vaddr, thread_current ()->pagedir);
   if (!entry)
@@ -86,10 +87,16 @@ page_create_page (void *vaddr, bool zeroed, bool writable)
   return true;
 }
 
+bool 
+page_create_mmap_pages (const char *filename, void *vaddr, bool writable)
+{
+  // FIXME: todo
+}
+
 void
 page_free_page (void *vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  struct aux_pt_entry *entry = page_lookup_current (vaddr);
 
   if (entry->frame != FRAME_INVALID) 
     {
@@ -115,7 +122,7 @@ page_free_page (void *vaddr)
 bool
 page_in (void *vaddr) 
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  struct aux_pt_entry *entry = page_lookup_current (vaddr);
   if (entry)
     {
       ASSERT (!page_is_resident (entry));
@@ -128,13 +135,15 @@ page_in (void *vaddr)
   return true;
 }
 
+/* Pages out the given page. It is assumed that this page is already
+ * pinned externally. 
+ */
 void 
-page_out (void *vaddr)
+page_out (void *vaddr, uint32_t *pd)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (vaddr);
+  struct aux_pt_entry *entry = page_lookup_entry (vaddr, pd);
   ASSERT (entry->frame != FRAME_INVALID);
 
-  frame_pin (entry->frame);
   if (!page_is_resident (entry)) {
     frame_unpin (entry->frame);
     return;
@@ -151,13 +160,11 @@ page_out (void *vaddr)
     { // mmap
       // FIXME: memmap page out
     }
-
-  frame_unpin (entry->frame);
 }
 
 bool page_in_and_pin (void *user_vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (user_vaddr);
+  struct aux_pt_entry *entry = page_lookup_current (user_vaddr);
   if (!entry)
     return false;
 
@@ -179,7 +186,7 @@ bool page_in_and_pin (void *user_vaddr)
 
 void page_unpin (void *user_vaddr)
 {
-  struct aux_pt_entry *entry = page_lookup_entry (user_vaddr);
+  struct aux_pt_entry *entry = page_lookup_current (user_vaddr);
   ASSERT (entry->frame != FRAME_INVALID);
   frame_unpin (entry->frame);
 }
@@ -248,17 +255,23 @@ page_create_entry (void *vaddr, uint32_t *pd)
   return record;
 }
 
-/* Right now just returns our internal struct. Might want to clean this interface. */
 struct aux_pt_entry *
-page_lookup_entry (void *user_vaddr)
+page_lookup_entry (void *user_vaddr, uint32_t *pd)
 {
-  struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = thread_current ()->pagedir };
+  struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = pd };
   
   struct hash_elem *result = hash_find(&aux_pt, &query.elem);
   if (result != NULL)
     return hash_entry (result, struct aux_pt_entry, elem);
   else
     return NULL;
+}
+
+/* Right now just returns our internal struct. Might want to clean this interface. */
+struct aux_pt_entry *
+page_lookup_current (void *user_vaddr)
+{
+  return page_lookup_entry (user_vaddr, thread_current ()->pagedir);
 }
 
 static bool 

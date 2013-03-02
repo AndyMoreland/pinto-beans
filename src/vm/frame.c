@@ -13,8 +13,10 @@
 #include <threads/synch.h>
 #include <threads/palloc.h>
 #include <threads/malloc.h>
-#include "frame.h"
+#include <userprog/pagedir.h>
 #include <stdio.h>
+#include "frame.h"
+#include "page.h"
 
 struct frame_table_entry
   {
@@ -53,6 +55,8 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
   void *frame = palloc_get_page (PAL_USER);
   if (frame) {
     entry = frame_create_entry (user_vaddr, pd, frame);
+    if (!clock_hand)
+      clock_hand = entry;
   } else {
     // try to swap
 
@@ -123,10 +127,62 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   return entry;
 }
 
+static bool
+frame_try_evict (struct frame_table_entry *entry)
+{
+  if (!lock_try_acquire (&entry->pin_lock))
+    return false;
+  else if (!pagedir_is_dirty (entry->pd, entry->user_addr))
+    {
+      page_out (entry->user_addr, entry->pd);
+      return true;
+    }
+  else 
+    {
+      pagedir_set_dirty (entry->pd, entry->user_addr, false);
+      lock_release (&entry->pin_lock);
+      return false;
+    }
+}
+
+static struct frame_table_entry * 
+clock_evict (void)
+{
+  lock_acquire (&frame_table_lock);
+  if (!clock_hand)
+    return NULL;
+  
+  struct frame_table_entry *start = clock_hand;
+  int loop_attempts = 0;
+  while (!frame_try_evict (clock_hand))
+  {
+    advance_clock_hand ();
+    if (clock_hand == start)
+    {
+      ++loop_attempts;
+      if (loop_attempts == 2)
+        return NULL;
+    }
+  }
+  struct frame_table_entry *evicted = clock_hand;
+  advance_clock_hand ();
+  lock_release (&frame_table_lock);
+   
+  return evicted;
+}
+
 static void 
 advance_clock_hand (void)
 {
-  lock_acquire (&frame_table_lock);
-  // FIXME: clock
-  lock_release (&frame_table_lock);
+  if (list_empty (&frame_table))
+    clock_hand = NULL;
+  else 
+    {
+      clock_hand = list_entry (list_next (&clock_hand->frame_table_elem),
+        struct frame_table_entry, frame_table_elem);
+        
+      if (&clock_hand->frame_table_elem == list_end (&frame_table))
+        clock_hand = list_entry (list_begin (&frame_table),
+          struct frame_table_entry, frame_table_elem);
+    }
 }

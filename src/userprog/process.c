@@ -656,7 +656,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      if (!page_create_page (upage, false, writable))
+      if (!page_create_swap_page (upage, false, writable))
         return false;
 
       page_in_and_pin (upage);
@@ -702,7 +702,7 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
 
 //  kpage = frame_get_kernel_addr (frame_get_frame_pinned (((uint8_t *) PHYS_BASE) - PGSIZE, thread_current ()->pagedir));
   kpage = ((uint8_t *) PHYS_BASE) - PGSIZE;
-  if (page_create_page (kpage, true, true)) {
+  if (page_create_swap_page (kpage, true, true)) {
     success = true;
   } else {
     kpage = NULL;
