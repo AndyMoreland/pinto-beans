@@ -131,9 +131,10 @@ syscall_init (void)
 static bool
 syscall_verify_address (void *vaddr)
 {
+  /* FIXME: SERIOUS BUG: this doesn't unpin things when we're done. */
   struct thread *t = thread_current ();
   return is_user_vaddr (vaddr) 
-    && pagedir_get_page (t->pagedir, pg_round_down (vaddr)) != NULL;
+    && page_in_and_pin (vaddr);
 }
 
 /* Verifies that the given pointer points to valid memory.
