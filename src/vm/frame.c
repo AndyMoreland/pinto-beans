@@ -14,6 +14,7 @@
 #include <threads/palloc.h>
 #include <threads/malloc.h>
 #include "frame.h"
+#include <stdio.h>
 
 struct frame_table_entry
   {

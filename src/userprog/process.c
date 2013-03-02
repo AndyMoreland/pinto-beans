@@ -19,6 +19,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "vm/page.h"
+#include "vm/frame.h"
 
 /* Maximum command line arguments. */
 #define MAX_ARGS 128
@@ -644,6 +646,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (ofs % PGSIZE == 0);
 
   file_seek (file, ofs);
+  // printf ("WRITABLE(%p): %d\n", upage, writable);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
       /* Calculate how to fill this page.
@@ -653,26 +656,34 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
+      if (!page_create_page (upage, false, writable))
+        return false;
+
+      page_in_and_pin (upage);
+
+//    uint8_t *kpage = frame_get_kernel_addr (frame_get_frame_pinned (upage, thread_current ()->pagedir));
+      uint8_t *kpage = FIXME_page_get_kernel_addr (upage);
       if (kpage == NULL)
         return false;
 
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
-          palloc_free_page (kpage);
+//          palloc_free_page (kpage);
+          page_free_page (upage);
           return false; 
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-
-      /* Advance. */
+      page_unpin (upage);
+//      /* add the page to the process's address space. */
+//      if (!install_page (upage, kpage, writable)) 
+//        {
+//          palloc_free_page (kpage);
+//          return false; 
+//        }
+//
+      /* advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
@@ -680,7 +691,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   return true;
 }
 
-/* Create a minimal stack by mapping a zeroed page at the top of
+/* create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
 setup_stack_with_args (void **esp, int argc, char *argv[])
@@ -689,12 +700,21 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
   bool success = false;
   char *string_locations[argc];
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+//  kpage = frame_get_kernel_addr (frame_get_frame_pinned (((uint8_t *) PHYS_BASE) - PGSIZE, thread_current ()->pagedir));
+  kpage = ((uint8_t *) PHYS_BASE) - PGSIZE;
+  if (page_create_page (kpage, true, true)) {
+    success = true;
+  } else {
+    kpage = NULL;
+  }
+//  memset (kpage, 0, PGSIZE);
+//  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+//      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success) 
         {
+          page_in_and_pin (kpage);
           *esp = PHYS_BASE;
           int i;
           for (i = argc - 1; i >= 0; i--)
@@ -727,7 +747,7 @@ setup_stack_with_args (void **esp, int argc, char *argv[])
           
           /* Make space for return address */
           *esp -= sizeof (void *);
-
+          page_unpin (kpage);
         }
       else
         palloc_free_page (kpage);

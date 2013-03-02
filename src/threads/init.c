@@ -103,8 +103,8 @@ main (void)
   malloc_init ();
   paging_init ();
 
-  page_init ();
   frame_init (user_page_limit);
+  page_init ();
 
   /* Segmentation. */
 #ifdef USERPROG
