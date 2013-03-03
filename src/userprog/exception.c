@@ -6,6 +6,8 @@
 #include "threads/thread.h"
 #include "vm/page.h"
 
+#define STACK_GROWTH_TOLERANCE 64
+
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -162,16 +164,30 @@ page_fault (struct intr_frame *f)
   else if (not_present)
     {
       if (!page_in (fault_addr))
-      {
-        printf ("killing you because you're stupid: %s\n", thread_current ()->name);
-        kill (f);
-      }
+        {
+          struct thread *t = thread_current ();
+          void *esp = f->esp;
+
+          if (page_exists (esp, t->pd))
+            return;
+  
+          if (pg_ofs (esp) < PG_SIZE - STACK_GROWTH_TOLERANCE)
+            {
+              thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+              return;
+            }
+
+          if (page_exists (pg_round_up (esp), t->pd))
+            page_create_swap_page (pg_round_down (esp), true, true);
+          else
+            thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+        }
     }
   else
     PANIC ("unhandled page fault at %p: %s error %s page in %s context.\n",
-            fault_addr,
-            not_present ? "not present" : "rights violation",
-            write ? "writing" : "reading",
-            user ? "user" : "kernel");
+           fault_addr,
+           not_present ? "not present" : "rights violation",
+           write ? "writing" : "reading",
+           user ? "user" : "kernel");
 }
 
