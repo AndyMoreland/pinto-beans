@@ -137,6 +137,7 @@ page_free_page (struct list_elem *elem)
           frame_unpin (entry->frame); 
           if (entry->type == SWAP)
             swap_clear (entry->swap_info);
+          frame_unpin (entry->frame);
         }
     }
 
