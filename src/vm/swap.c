@@ -49,17 +49,22 @@ swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
   block_sector_t swap_start = sd;
 
   ASSERT (num_sectors == SWAP_MAX_SECTORS);
+  lock_acquire (&swap_used_slots_lock);
   ASSERT (bitmap_all (swap_used_slots, swap_start, num_sectors));
+  lock_release (&swap_used_slots_lock);
 
   char *cursor = (char *)frame_start;
 
   size_t s;
   for (s = 0; s < num_sectors; ++s)
-  {
-    block_read (swap_get_device (), swap_start + s, cursor);
-    cursor += BLOCK_SECTOR_SIZE;
-  }
+    {
+      block_read (swap_get_device (), swap_start + s, cursor);
+      cursor += BLOCK_SECTOR_SIZE;
+    }
+
+  lock_acquire (&swap_used_slots_lock);
   bitmap_set_multiple (swap_used_slots, swap_start, num_sectors, false);
+  lock_release (&swap_used_slots_lock);
 
   return cursor - (char *)frame_start;
 }
@@ -67,8 +72,10 @@ swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
 void 
 swap_clear (swap_descriptor sd)
 {
+  lock_acquire (&swap_used_slots_lock);
   ASSERT (bitmap_all (swap_used_slots, sd, SWAP_MAX_SECTORS));
   bitmap_set_multiple (swap_used_slots, sd, SWAP_MAX_SECTORS, false);
+  lock_release (&swap_used_slots_lock);
 }
 
 static size_t
