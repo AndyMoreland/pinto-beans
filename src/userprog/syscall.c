@@ -16,6 +16,8 @@
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
+#define STACK_BOTTOM 0xbff00000
+#define STACK_GROWTH_TOLERANCE 64
 
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt (struct intr_frame *f, struct list *pin_list);
@@ -33,10 +35,11 @@ static void syscall_tell (struct intr_frame *f, struct list *pin_list);
 static void syscall_close (struct intr_frame *f, struct list *pin_list);
 static void syscall_do_close (int fd_id);
 
-static bool syscall_verify_pointer (void *vaddr, struct list *pin_list);
-static bool syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list);
+static bool syscall_verify_pointer (void *vaddr, struct list *pin_list, void *esp);
+static bool syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list, 
+                                           void *esp);
 
-static bool syscall_potentially_track_pin (void *uaddr, struct list *pin_list);
+static bool syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp);
 static void syscall_cleanup_pins_and_exit (int message, struct list *pin_list);
 
 struct file_descriptor {
@@ -151,21 +154,21 @@ syscall_verify_buffer_writable (void *vaddr, size_t length)
 
 /* Verifies that vaddr is within user memory and also mapped to a page */
 static bool
-syscall_verify_address (void *vaddr, struct list *pin_list)
+syscall_verify_address (void *vaddr, struct list *pin_list, void *esp)
 {
   return is_user_vaddr (vaddr)
-    && syscall_potentially_track_pin (pg_round_down (vaddr), pin_list);
+    && syscall_ensure_valid_page (pg_round_down (vaddr), pin_list, esp);
 }
 
 /* Verifies that the given pointer points to valid memory.
    Checks the address and 4 bytes after the address. */
 static bool
-syscall_verify_pointer (void *vaddr, struct list *pin_list) 
+syscall_verify_pointer (void *vaddr, struct list *pin_list, void *esp) 
 {
   /* Check if vaddr is within user address space
      and belongs to a mapped page. */
-  return syscall_verify_address (vaddr, pin_list) 
-    && syscall_verify_pointer_offset (vaddr, sizeof (void *), pin_list);
+  return syscall_verify_address (vaddr, pin_list, esp) 
+    && syscall_verify_pointer_offset (vaddr, sizeof (void *), pin_list, esp);
 }
 
 /* Verifies that the given pointer offset by `offset` points to a valid
@@ -173,31 +176,32 @@ syscall_verify_pointer (void *vaddr, struct list *pin_list)
    Iterates over all pages that are spanned by the offset and makes sure they
    are mapped. */
 static bool
-syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list)
+syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list, void *esp)
 {
   bool result = true;
   size_t offset_tmp;
   for (offset_tmp = PGSIZE; offset_tmp < offset; offset_tmp += PGSIZE)
-    result = result && syscall_verify_address ((char *) vaddr + offset_tmp, pin_list);
-  return result && syscall_verify_address ((char *) vaddr + offset, pin_list);
+    result = result && syscall_verify_address ((char *) vaddr + offset_tmp, pin_list, esp);
+  return result && syscall_verify_address ((char *) vaddr + offset, pin_list, esp);
 }
 
 /* Makes *buffer point to the arg_number'th arg.
    arg_number = 0 returns interrupt number.
    Verifies that the pointer is valid. */
 static bool
-syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer, struct list *pin_list)
+syscall_pointer_to_arg (struct intr_frame *f, int arg_number, void **buffer, 
+                        struct list *pin_list)
 {
   void *pointer = (void *)((char *)f->esp + sizeof (char *) * arg_number);
   *buffer = pointer;
-  return syscall_verify_pointer (pointer, pin_list);
+  return syscall_verify_pointer (pointer, pin_list, f->esp);
 }
 
 /* Iterates over the characters in the given string buffer.
    Ensures that all bytes are mapped (intelligently) and 
    in user memory. */
 static bool
-syscall_verify_string (char *str, struct list *pin_list)
+syscall_verify_string (char *str, struct list *pin_list, void *esp)
 {
   struct thread *t = thread_current ();
 
@@ -206,7 +210,7 @@ syscall_verify_string (char *str, struct list *pin_list)
   void *previous_page_start = pg_round_down (cursor);
   bool valid = is_user_vaddr (cursor) && cur_page != NULL;
   
-  syscall_potentially_track_pin (pg_round_down (cursor), pin_list);
+  syscall_ensure_valid_page (pg_round_down (cursor), pin_list, esp);
 
   while (valid && *cursor != '\0')
     {
@@ -216,7 +220,7 @@ syscall_verify_string (char *str, struct list *pin_list)
           cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
           
           previous_page_start = cursor;
-          syscall_potentially_track_pin (pg_round_down (cursor), pin_list);
+          syscall_ensure_valid_page (pg_round_down (cursor), pin_list, esp);
         }
       valid = valid && is_user_vaddr (cursor) && cur_page != NULL;
     }
@@ -225,25 +229,35 @@ syscall_verify_string (char *str, struct list *pin_list)
 }
 
 static bool
-syscall_potentially_grow_stack (void *uaddr)
+syscall_potentially_grow_stack (void *uaddr, void *esp)
 {
+  if ((((int64_t) esp - (int64_t) uaddr <= (int64_t) STACK_GROWTH_TOLERANCE)
+       || (uaddr >= esp))
+      && (STACK_BOTTOM < uaddr))
+    {
+      page_create_swap_page (pg_round_down (uaddr), true, true);
+      printf ("Grew the stack!\n");
+      return true;
+    }
   return false;
 }
 
 static bool
-syscall_potentially_track_pin (void *uaddr, struct list *pin_list)
+syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
 {
+  printf ("Ensuring [%p] is valid for esp: [%p]\n", uaddr, esp);
   struct list_elem *e;
-  if (!list_empty (pin_list))
+  /* Check to see if we have already pinned this address' page */
+  for (e = list_begin (pin_list); e != list_end (pin_list);
+       e = list_next (e))
     {
-      for (e = list_begin (pin_list); e != list_end (pin_list);
-           e = list_next (e))
-        {
-          struct pinned_page *cursor = list_entry (e, struct pinned_page, elem);
-          if (cursor->uaddr == pg_round_down(uaddr))
-            return true;
-        }
+      struct pinned_page *cursor = list_entry (e, struct pinned_page, elem);
+      if (cursor->uaddr == pg_round_down(uaddr))
+        return true;
     }
+
+  printf ("Trying to page in\n");
+  /* If we successfully page it in then track it */
   if (page_in_and_pin (pg_round_down (uaddr)))
     {
       struct pinned_page *pp = malloc (sizeof (struct pinned_page));
@@ -253,9 +267,11 @@ syscall_potentially_track_pin (void *uaddr, struct list *pin_list)
     } 
   else
     {
-      if (syscall_potentially_grow_stack (uaddr))
-        return syscall_potentially_track_pin (uaddr, pin_list);
-
+      /* Try to grow the stack to include this, and then pin it */
+      if (syscall_potentially_grow_stack (uaddr, esp))
+        return syscall_ensure_valid_page (uaddr, pin_list, esp);
+      
+      /* Give up */
       return false;
     }
 }
@@ -364,8 +380,7 @@ syscall_create (struct intr_frame *f, struct list *pin_list)
   unsigned *initial_size;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &file, pin_list)
-      /* || !syscall_verify_pointer (*file) */
-      || !syscall_verify_string (*file, pin_list)
+      || !syscall_verify_string (*file, pin_list, f->esp)
       || !syscall_pointer_to_arg (f, 2, (void **) &initial_size, pin_list))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
   
@@ -380,8 +395,7 @@ syscall_open (struct intr_frame *f, struct list *pin_list) {
   struct file_descriptor *fd = NULL;
 
   if (!syscall_pointer_to_arg (f, 1, (void **) &name, pin_list)
-      || !syscall_verify_pointer (*name, pin_list)
-      || !syscall_verify_string (*name, pin_list))
+      || !syscall_verify_string (*name, pin_list, f->esp))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
   
   lock_acquire (&fs_lock);
@@ -426,7 +440,7 @@ syscall_remove (struct intr_frame *f, struct list *pin_list)
 {
   char **name;
   if (!syscall_pointer_to_arg (f, 1, (void **) &name, pin_list)
-      || !syscall_verify_string (*name, pin_list))
+      || !syscall_verify_string (*name, pin_list, f->esp))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*name != NULL)
@@ -465,7 +479,7 @@ syscall_write (struct intr_frame *f, struct list *pin_list)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
       || !syscall_pointer_to_arg (f, 2, (void **) &buffer, pin_list)
       || !syscall_pointer_to_arg (f, 3, (void **) &size, pin_list)
-      || !syscall_verify_pointer_offset (*buffer, *size, pin_list))
+      || !syscall_verify_pointer_offset (*buffer, *size, pin_list, f->esp))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*fd_id == STDOUT_FILENO)
@@ -496,7 +510,7 @@ syscall_read (struct intr_frame *f, struct list *pin_list)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
       || !syscall_pointer_to_arg (f, 2, (void **) &buffer, pin_list)
       || !syscall_pointer_to_arg (f, 3, (void **) &size, pin_list)
-      || !syscall_verify_pointer_offset (*buffer, *size, pin_list)
+      || !syscall_verify_pointer_offset (*buffer, *size, pin_list, f->esp)
       || !syscall_verify_buffer_writable (*buffer, *size))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
@@ -582,7 +596,7 @@ syscall_exec (struct intr_frame *f, struct list *pin_list)
 {
   char **cmdline;
   if (!syscall_pointer_to_arg (f, 1, (void **) &cmdline, pin_list)
-      || !syscall_verify_string (*cmdline, pin_list))
+      || !syscall_verify_string (*cmdline, pin_list, f->esp))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   f->eax = process_execute (*cmdline);
