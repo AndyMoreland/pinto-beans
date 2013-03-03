@@ -230,7 +230,6 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority, thread_current ()->nice, thread_current ()->recent_cpu);
   tid = t->tid = allocate_tid ();
-  printf ("initializing thread: %d\n", tid);
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
