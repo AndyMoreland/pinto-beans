@@ -141,13 +141,18 @@ syscall_init (void)
 static bool
 syscall_verify_buffer_writable (void *vaddr, size_t length)
 {
+  // printf ("Verifying writable\n");
   struct thread *t = thread_current ();
+  // printf ("1\n");
   bool result = page_writable (vaddr, t->pagedir)
     && page_writable (vaddr + length, t->pagedir);
+  // printf ("yo. 2\n");
 
   size_t offset_tmp;
   for (offset_tmp = PGSIZE; offset_tmp < length; offset_tmp += PGSIZE)
     result = result && page_writable ((char *) vaddr + offset_tmp, t->pagedir);
+
+  // printf ("3\n");
 
   return result;
 }
@@ -178,7 +183,7 @@ syscall_verify_pointer (void *vaddr, struct list *pin_list, void *esp)
 static bool
 syscall_verify_pointer_offset (void *vaddr, size_t offset, struct list *pin_list, void *esp)
 {
-  bool result = true;
+  bool result = syscall_verify_address (vaddr, pin_list, esp);
   size_t offset_tmp;
   for (offset_tmp = PGSIZE; offset_tmp < offset; offset_tmp += PGSIZE)
     result = result && syscall_verify_address ((char *) vaddr + offset_tmp, pin_list, esp);
@@ -236,7 +241,7 @@ syscall_potentially_grow_stack (void *uaddr, void *esp)
       && (STACK_BOTTOM < uaddr))
     {
       page_create_swap_page (pg_round_down (uaddr), true, true);
-      printf ("Grew the stack!\n");
+      // printf ("Grew the stack!\n");
       return true;
     }
   return false;
@@ -245,7 +250,7 @@ syscall_potentially_grow_stack (void *uaddr, void *esp)
 static bool
 syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
 {
-  printf ("Ensuring [%p] is valid for esp: [%p]\n", uaddr, esp);
+  // printf ("Ensuring [%p] is valid for esp: [%p]\n", uaddr, esp);
   struct list_elem *e;
   /* Check to see if we have already pinned this address' page */
   for (e = list_begin (pin_list); e != list_end (pin_list);
@@ -256,13 +261,14 @@ syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
         return true;
     }
 
-  printf ("Trying to page in\n");
+  // printf ("Trying to page in\n");
   /* If we successfully page it in then track it */
   if (page_in_and_pin (pg_round_down (uaddr)))
     {
       struct pinned_page *pp = malloc (sizeof (struct pinned_page));
       pp->uaddr = pg_round_down (uaddr);
       list_push_front (pin_list, &pp->elem);
+      // printf ("Successfully paged in!\n");
       return true;
     } 
   else
