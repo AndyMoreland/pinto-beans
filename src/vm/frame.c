@@ -18,6 +18,10 @@
 #include "frame.h"
 #include "page.h"
 
+
+/* FIXME remove this include */
+#include "threads/thread.h"
+
 struct frame_table_entry
   {
     void *frame_addr;
@@ -58,8 +62,10 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
   void *frame = palloc_get_page (PAL_USER);
   if (frame) {
     entry = frame_create_entry (user_vaddr, pd, frame);
+    lock_acquire (&frame_table_lock);
     if (!clock_hand)
       clock_hand = entry;
+    lock_release (&frame_table_lock);
   } else {
     // try to swap
     entry = clock_evict ();
@@ -83,7 +89,9 @@ frame_get_kernel_addr (frame_id frame)
 void 
 frame_pin (frame_id frame)
 {
+  // printf ("pin %p for [%d]\n", frame, thread_current ()->tid);
   lock_acquire (&frame_entry (frame)->pin_lock);
+  // printf ("pinned %p\n", frame);
 }
 
 void 
