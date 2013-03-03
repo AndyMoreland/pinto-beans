@@ -41,19 +41,67 @@ Andy Moreland:
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
+FIXME: this is only a description for resident pages
+
+The MMU uses the standard pagedir/page table system that was in place 
+when we started writing code. We make sure to keep these tables up
+to date as we create pages.
+
+On the other hand, if we need to find the location of a frame for a
+given page we do the following:
+
+1) get the user vaddr of an address in the page
+2) look up a aux_page_table_entry in a hash table in page.c
+3) this entry contains a typecasted pointer to a frame_table_entry from
+  frame.c
+4) the frame_table_entry contains a kernel address for the page's data.
+
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
+
+We sidestep the issue by never touching memory through kernel addresses.
+In theory the only time that user data should get dirty is if the user
+themself touches it or uses a syscall. All of our syscalls directly
+use user addresses.
+
+Thus, the user page table entry is the only one that we need to check
+for accessed and dirty bits.
 
 ---- SYNCHRONIZATION ----
 
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
+Before we do any operation on the frame table, we acquire a global lock.
+
+palloc_get_page locks internally. Thus, if there are free frames in
+the user pool, we're safe.
+
+If there is nothing in the user pool, we check the free list next.
+We make sure to acquire the frame table lock before iterating over the
+free list, so there are no race conditions here.
+
+On the other hand, if we need to perform an eviction we make sure
+to acquire a lock on the frame table. This lock is held until
+we find a frame which we're going to evict a page from.
+
+Thus, in any situation where we need to acquire a page we hold a 
+global lock until a slot is selected.
+
 ---- RATIONALE ----
 
 >> A5: Why did you choose the data structure(s) that you did for
 >> representing virtual-to-physical mappings?
+
+We chose to use a hash table from vaddrs to aux_ptes in order
+to have O(1) lookup on a vaddr. This makes sense to do because the 
+page fault handler only gets the vaddr when it's called, so we can't
+do something like store a pointer directly to a struct.
+
+Then, the aux_pte struct contains a direct reference to its frame or
+eviction locations so looking up the actual physical address/file 
+in which it lives is O(1).
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -69,13 +117,46 @@ Andy Moreland:
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
+We use a clock hand algorithm. We maintain a global "hand" pointer
+which points to a frame_table_entry. The frame_table_entries
+are stored in a list which we then iterate over while holding
+a lock on the frame table.
+
+At each entry we attempt to acquire a "pin" lock on the entry itself.
+If we are able to acquire then pin lock then we know that no one else
+is currently touching it. In this case, we check its accessed bit.
+If it has not been accessed, we drop the global lock and evict this
+frame. Otherwise, we clear its accessed bit and continue on.
+
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
 >> structures) to reflect the frame Q no longer has?
 
+We have designed our code so that if we acquire a pin_lock on the frame
+that we think we're resident in then we immediately check if we are 
+actually still resident before doing any work. If we are resident,
+then we own the frame. Otherwise, we've been paged out in the interim
+and we immediately drop the lock.
+
+This means that we don't need to have frames change their page's refs
+to null. Instead, all that we do is ask the page to evict itself.
+
+As part of this eviction, the page stores where it evicted itself to.
+This can be a file or swap slot.
+
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
+
+We check to see if the fault was caused by a user access. Then we check
+the aux page table in order to make sure that there isn't supposed to be
+memory mapped at that location.
+
+Then, we check that the fault was either within 32 bytes of the esp or
+that it was above the esp. If either of these conditions are true we
+check to make sure that increasing the size of the stack further would
+not exceed a maximum stack size of 8mb. If all of these conditions are
+met then we grow the stack.
 
 ---- SYNCHRONIZATION ----
 
@@ -84,21 +165,49 @@ Andy Moreland:
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
+// fixme
+
 >> B6: A page fault in process P can cause another process Q's frame
 >> to be evicted.  How do you ensure that Q cannot access or modify
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
+
+Whenever a process P evicts another process Q's frame what we do is
+acquire the pin lock on that frame and then immediately mark it as
+not present in the page table.
+
+Once these operations have been completed we start the eviction. If
+an access from Q occurs at this point it will result in a page fault.
+The page fault will notice that the page exists in the aux_page_table
+and so it will try to page the page in. In order to do this Q will have
+to acquire the pin_lock. So, Q will block until P releases the pin_lock.
+Thus, the access is prevented until P has evicted the frame. After
+P has evicted the frame and releases the pin lock Q is able to 
+fault the page back in.
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
+We acquire a pin lock on the frame before we start the process of
+filling it. We also acquire a pin lock on the frame before we start
+evicting it. Thus, the frame will have a page fully resident in it
+before eviction is allowed to occur (and vice versa.)
+
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
 >> in user programs), or do you have a mechanism for "locking" frames
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
+
+We have modified our code for verifying addresses in syscalls.
+Before we changed it it was responsible for making sure that all
+addresses were inside of mapped pages. Now it is responsible for
+paging_in_and_pin'ing any page that is referenced. If it fails to
+page_in_and_pin a page then it means that the address is invalid.
+In this case, we attempt to grow the stack but if we choose not to
+then we kill the process.
 
 ---- RATIONALE ----
 
@@ -108,6 +217,16 @@ Andy Moreland:
 >> possibility for deadlock but allows for high parallelism.  Explain
 >> where your design falls along this continuum and why you chose to
 >> design it this way.
+
+We have one global lock for the frame, swap and aux page tables. We 
+make sure to hold the locks whenever we're doing modifications to the
+structure of the tables.
+
+We have a finer grained lock for each frame, as well. Whenever we want
+to do work on a frame's data, or on a page that is contained in a frame,
+we acquire the frame's lock. This allows a high degree of concurrency in
+IO. Since only one page at a time is resident in a frame we will only
+block /* FIXME: finish this answer */
 
 			 MEMORY MAPPED FILES
 			 ===================
