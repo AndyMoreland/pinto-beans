@@ -135,13 +135,24 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+static bool
+syscall_verify_buffer_writable (void *vaddr, size_t length)
+{
+  struct thread *t = thread_current ();
+  bool result = page_writable (vaddr, t->pagedir)
+    && page_writable (vaddr + length, t->pagedir);
+
+  size_t offset_tmp;
+  for (offset_tmp = PGSIZE; offset_tmp < length; offset_tmp += PGSIZE)
+    result = result && page_writable ((char *) vaddr + offset_tmp, t->pagedir);
+
+  return result;
+}
+
 /* Verifies that vaddr is within user memory and also mapped to a page */
 static bool
 syscall_verify_address (void *vaddr, struct list *pin_list)
 {
-
-  
-  
   return is_user_vaddr (vaddr)
     && syscall_potentially_track_pin (pg_round_down (vaddr), pin_list);
 }
@@ -153,7 +164,8 @@ syscall_verify_pointer (void *vaddr, struct list *pin_list)
 {
   /* Check if vaddr is within user address space
      and belongs to a mapped page. */
-  return syscall_verify_address (vaddr, pin_list) && syscall_verify_pointer_offset (vaddr, sizeof (void *), pin_list);
+  return syscall_verify_address (vaddr, pin_list) 
+    && syscall_verify_pointer_offset (vaddr, sizeof (void *), pin_list);
 }
 
 /* Verifies that the given pointer offset by `offset` points to a valid
@@ -202,6 +214,7 @@ syscall_verify_string (char *str, struct list *pin_list)
       if ((void *) cursor - previous_page_start >= PGSIZE)
         {
           cur_page = pagedir_get_page (t->pagedir, pg_round_down (cursor));
+          
           previous_page_start = cursor;
           syscall_potentially_track_pin (pg_round_down (cursor), pin_list);
         }
@@ -209,6 +222,12 @@ syscall_verify_string (char *str, struct list *pin_list)
     }
 
   return valid;
+}
+
+static bool
+syscall_potentially_grow_stack (void *uaddr)
+{
+  return false;
 }
 
 static bool
@@ -234,6 +253,9 @@ syscall_potentially_track_pin (void *uaddr, struct list *pin_list)
     } 
   else
     {
+      if (syscall_potentially_grow_stack (uaddr))
+        return syscall_potentially_track_pin (uaddr, pin_list);
+
       return false;
     }
 }
@@ -366,7 +388,7 @@ syscall_open (struct intr_frame *f, struct list *pin_list) {
   if (*name != NULL)
     fd = syscall_create_fd_for_file (*name);
   lock_release (&fs_lock);
-  
+
   if (fd != NULL)
     f->eax = fd->fd_id;
   else
@@ -474,7 +496,8 @@ syscall_read (struct intr_frame *f, struct list *pin_list)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
       || !syscall_pointer_to_arg (f, 2, (void **) &buffer, pin_list)
       || !syscall_pointer_to_arg (f, 3, (void **) &size, pin_list)
-      || !syscall_verify_pointer_offset (*buffer, *size, pin_list))
+      || !syscall_verify_pointer_offset (*buffer, *size, pin_list)
+      || !syscall_verify_buffer_writable (*buffer, *size))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   if (*fd_id == STDIN_FILENO)

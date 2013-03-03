@@ -9,6 +9,7 @@
 
 #define STACK_GROWTH_TOLERANCE 64
 #define MAX_STACK_SIZE (1024 * 1024)
+#define STACK_BOTTOM 0xbff00000
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -110,17 +111,6 @@ kill (struct intr_frame *f)
     }
 }
 
-/* Page fault handler.  This is a skeleton that must be filled in
-   to implement virtual memory.  Some solutions to project 2 may
-   also require modifying this code.
-
-   At entry, the address that faulted is in CR2 (Control Register
-   2) and information about the fault, formatted as described in
-   the PF_* macros in exception.h, is in F's error_code member.  The
-   example code here shows how to parse that information.  You
-   can find more information about both of these in the
-   description of "Interrupt 14--Page Fault Exception (#PF)" in
-   [IA32-v3a] section 5.15 "Exception and Interrupt Reference". */
 static void
 page_fault (struct intr_frame *f) 
 {
@@ -162,10 +152,10 @@ page_fault (struct intr_frame *f)
   }
 
   if (!not_present && user)
-    kill (f);
+    thread_exit_with_message (SEG_FAULT_MESSAGE);
   
-  if (!is_user_vaddr (fault_addr))
-    kill (f);
+  if (!is_user_vaddr (fault_addr) && user)
+    thread_exit_with_message (SEG_FAULT_MESSAGE);
 
   else if (not_present)
     {
@@ -177,19 +167,18 @@ page_fault (struct intr_frame *f)
              we're only checking that we're close to the ESP right now */
           
           /* Technically will grow up to 64 away -- FIXME */
-          printf ("%p, %p, %p, %llu, %llu, %llu\n", esp, fault_addr, PHYS_BASE, 
+          /* printf ("Esp: [%p], Fault_addr: [%p], Phys_base: [%p], MaxStack: [%p], %lld, %lld, %lld\n", esp, fault_addr, PHYS_BASE, MAX_STACK_SIZE,
                   ((int64_t) esp - (int64_t) fault_addr), ((int64_t) fault_addr - (int64_t) esp), 
-                  ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE));
+                  ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE)); */
 
-          if (((int64_t) esp - (int64_t) fault_addr < (int64_t) STACK_GROWTH_TOLERANCE)
-              || ((int64_t) fault_addr > (int64_t) esp))
+          if ((((int64_t) esp - (int64_t) fault_addr <= (int64_t) STACK_GROWTH_TOLERANCE)
+               || (fault_addr >= esp))
+              && (STACK_BOTTOM < fault_addr))
             {
-              if ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE > (int64_t) fault_addr)
-                kill (f);
               page_create_swap_page (pg_round_down (fault_addr), true, true);
             }
           else
-            kill (f);
+            thread_exit_with_message (SEG_FAULT_MESSAGE);
         }
     }
   else

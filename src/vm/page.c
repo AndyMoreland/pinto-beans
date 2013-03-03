@@ -148,6 +148,12 @@ page_exists (void *vaddr, uint32_t *pd)
 }
 
 bool
+page_writable (void *vaddr, uint32_t *pd)
+{
+  return page_lookup_entry (vaddr, pd)->writable;
+}
+
+bool
 page_in (void *vaddr) 
 {
   struct aux_pt_entry *entry = page_lookup_current (vaddr);
