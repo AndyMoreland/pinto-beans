@@ -123,6 +123,8 @@ page_free_page (struct list_elem *elem)
   hash_delete (&aux_pt, &entry->elem);
   lock_release (&aux_pt_lock);
 
+  bool pinned = false;
+
 
   if (entry->frame != FRAME_INVALID) 
     {
@@ -134,10 +136,10 @@ page_free_page (struct list_elem *elem)
         }
       else
         {
-          frame_unpin (entry->frame); 
+          /* FIXME: this variable is bogus */
+          pinned = true;
           if (entry->type == SWAP)
             swap_clear (entry->swap_info);
-          frame_unpin (entry->frame);
         }
     }
 
@@ -147,6 +149,9 @@ page_free_page (struct list_elem *elem)
       file_close (entry->mmap_info.fd);
       lock_release (&fs_lock);
     }
+
+  if(pinned)
+    frame_unpin (entry->frame);
 
   free (entry);
 }
