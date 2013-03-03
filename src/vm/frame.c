@@ -29,6 +29,7 @@ struct frame_table_entry
     uint32_t *pd;
     struct lock pin_lock;
     struct list_elem elem;
+    bool is_dying;
   };
 
 static struct frame_table_entry *clock_hand;
@@ -105,7 +106,10 @@ frame_release_frame (frame_id frame)
 {
   ASSERT (frame);
   struct frame_table_entry *entry = frame_entry (frame);
+  entry->is_dying = true;
+  frame_unpin (frame);
   lock_acquire (&frame_table_lock);
+  entry->is_dying = false;
   if (clock_hand == entry)
     {
       advance_clock_hand ();
@@ -116,7 +120,6 @@ frame_release_frame (frame_id frame)
   list_remove (&entry->elem);
   pagedir_clear_page (entry->pd, entry->user_addr);
   list_push_front (&free_list, &entry->elem);
-  lock_release (&entry->pin_lock);
   lock_release (&frame_table_lock);
 }
 
@@ -133,9 +136,9 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   entry->frame_addr = frame;
   entry->user_addr = vaddr;
   entry->pd = pd;
+  entry->is_dying = false;
   lock_init (&entry->pin_lock);
   lock_acquire (&entry->pin_lock);
-
   lock_acquire (&frame_table_lock);
   list_push_back (&frame_table, &entry->elem);
   lock_release (&frame_table_lock);
@@ -149,7 +152,7 @@ frame_try_evict (struct frame_table_entry *entry)
 {
   if (!lock_try_acquire (&entry->pin_lock))
     return false;
-  else if (!pagedir_is_accessed (entry->pd, entry->user_addr))
+  else if (!entry->is_dying && !pagedir_is_accessed (entry->pd, entry->user_addr))
     {
       page_out (entry->user_addr, entry->pd);
       return true;
