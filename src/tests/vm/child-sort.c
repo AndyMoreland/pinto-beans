@@ -28,6 +28,7 @@ main (int argc UNUSED, char *argv[])
   for (i = 0; i < size; i++)
     histogram[buf[i]]++;
   p = buf;
+
   for (i = 0; i < sizeof histogram / sizeof *histogram; i++) 
     {
       size_t j = histogram[i];

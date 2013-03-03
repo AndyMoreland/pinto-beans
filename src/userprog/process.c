@@ -647,8 +647,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
-
-  file_seek (file, ofs);
+  
   // printf ("WRITABLE(%p): %d\n", upage, writable);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -658,37 +657,19 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      if (!page_create_swap_page (upage, false, writable))
+      bool success;
+      if (page_read_bytes)
+        success = page_create_mmap_page (file, ofs, 
+           page_read_bytes, upage, writable, writable);
+      else
+        success = page_create_swap_page (upage, true, writable);
+        
+      if (!success)
         return false;
 
-      page_in_and_pin (upage);
-
-//    uint8_t *kpage = frame_get_kernel_addr (frame_get_frame_pinned (upage, thread_current ()->pagedir));
-      uint8_t *kpage = FIXME_page_get_kernel_addr (upage);
-      if (kpage == NULL)
-        return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-//          palloc_free_page (kpage);
-          page_free_page (upage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      page_unpin (upage);
-//      /* add the page to the process's address space. */
-//      if (!install_page (upage, kpage, writable)) 
-//        {
-//          palloc_free_page (kpage);
-//          return false; 
-//        }
-//
-      /* advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
+      ofs += PGSIZE;
       upage += PGSIZE;
     }
   return true;

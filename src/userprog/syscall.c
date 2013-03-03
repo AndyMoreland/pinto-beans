@@ -16,8 +16,10 @@
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
+#define MMAP_FAILURE -1
 #define STACK_BOTTOM 0xbff00000
 #define STACK_GROWTH_TOLERANCE 64
+
 
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt (struct intr_frame *f, struct list *pin_list);
@@ -33,6 +35,9 @@ static void syscall_write (struct intr_frame *f, struct list *pin_list);
 static void syscall_seek (struct intr_frame *f, struct list *pin_list);
 static void syscall_tell (struct intr_frame *f, struct list *pin_list);
 static void syscall_close (struct intr_frame *f, struct list *pin_list);
+static void syscall_mmap (struct intr_frame *f, struct list *pin_list);
+static void syscall_munmap (struct intr_frame *f, struct list *pin_list);
+
 static void syscall_do_close (int fd_id);
 
 static bool syscall_verify_pointer (void *vaddr, struct list *pin_list, void *esp);
@@ -59,12 +64,12 @@ syscall_get_new_fd_id (void)
 {
   struct thread *t = thread_current ();
 
-  t->highest_fd_id++;
+  t->highest_syscall_id++;
 
-  if (t->highest_fd_id < 2)
-    t->highest_fd_id = 2;
+  if (t->highest_syscall_id < 2)
+    t->highest_syscall_id = 2;
   
-  return t->highest_fd_id;
+  return t->highest_syscall_id;
 }
 
 /* Get the file descriptor associated with fd_id in the current thread.
@@ -363,6 +368,15 @@ syscall_handler (struct intr_frame *f)
     case SYS_CLOSE:
       syscall_close (f, &pin_list);
       break;
+
+    case SYS_MMAP:
+      syscall_mmap (f, &pin_list);
+      break;
+
+    case SYS_MUNMAP:
+      syscall_munmap (f, &pin_list);
+      break;
+
     default:
       syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, &pin_list);
       break;
@@ -617,5 +631,121 @@ syscall_wait (struct intr_frame *f, struct list *pin_list)
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
   f->eax = process_wait (*pid);
+}
+
+/* mmap implementation */
+struct mmap_descriptor
+  {
+    int mmap_id;
+    void *start;
+    off_t pages;
+    struct list_elem elem;
+  };
+
+static struct mmap_descriptor * 
+syscall_mmap_descriptor_create (void *start, off_t pages)
+{
+  struct mmap_descriptor *md = malloc (sizeof (struct mmap_descriptor));
+  if (!md)
+    return NULL;
+
+  md->mmap_id = syscall_get_new_fd_id (); 
+  md->start = start;
+  md->pages = pages;
+  list_push_back (&thread_current ()->mmap_descriptors, &md->elem);
+  return md;
+}
+
+/* Get the mmap descriptor associated with fd_id in the current thread.
+   Returns NULL if none found. */
+static struct mmap_descriptor *
+syscall_get_mmap_descriptor (int mmap_id) 
+{
+  struct thread *t = thread_current ();
+  struct list_elem *e;
+
+  for (e = list_begin (&t->mmap_descriptors);
+       e != list_end (&t->mmap_descriptors);
+       e = list_next (e))
+    {
+      struct mmap_descriptor *md = list_entry (e, struct mmap_descriptor, elem);
+      if (md->mmap_id == mmap_id)
+        return md;
+    }
+
+  return NULL;
+}
+
+static int 
+syscall_do_mmap_pages (struct file *fd_raw, void *vaddr)
+{
+  if (pg_ofs (vaddr))
+    return MMAP_FAILURE;
+
+  lock_acquire (&fs_lock);
+  off_t len = file_length (fd_raw);
+  off_t pages;
+ 
+  for (pages = 0; pages * PGSIZE < len; ++pages)
+    {
+      void *cursor = (int8_t *)vaddr + pages * PGSIZE;
+      off_t size = len - pages * PGSIZE;
+      if (size > PGSIZE)
+        size = PGSIZE;
+
+      if (!is_user_vaddr (cursor)
+         || !page_create_mmap_page (fd_raw, pages * PGSIZE, size, 
+           cursor, true, false))
+        { 
+          lock_release (&fs_lock);
+          page_free_range (vaddr, pages);
+          return MMAP_FAILURE;
+        }
+    }
+
+  lock_release (&fs_lock);
+  struct mmap_descriptor *d = 
+    syscall_mmap_descriptor_create (vaddr, pages);
+  if (!d)
+    {
+      page_free_range (vaddr, pages);
+      return MMAP_FAILURE;
+    }
+  return d->mmap_id;
+}
+
+static void 
+syscall_mmap (struct intr_frame *f, struct list *pin_list)
+{
+  int *fd_id;
+  void **vaddr;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id, pin_list)
+      || !syscall_pointer_to_arg (f, 2, (void **) &vaddr, pin_list)
+      || !is_user_vaddr (*vaddr))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);
+
+  if (fd != NULL && *fd_id != 0 && *fd_id != 1 && *vaddr != NULL)
+    f->eax = syscall_do_mmap_pages (fd->f, *vaddr);
+  else
+    f->eax = FILE_FAILURE;
+}
+
+static void 
+syscall_munmap (struct intr_frame *f, struct list *pin_list)
+{
+  int32_t *mmapid;
+  if (!syscall_pointer_to_arg (f, 1, (void **) &mmapid, pin_list))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  struct mmap_descriptor *md = syscall_get_mmap_descriptor (*mmapid);
+  if (md)
+    {
+      list_remove (&md->elem);
+      page_free_range (md->start, md->pages);
+      free (md);
+    }
 }
 
