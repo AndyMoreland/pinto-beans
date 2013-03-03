@@ -4,6 +4,9 @@
 #include <debug.h>
 #include <threads/synch.h>
 #include "swap.h"
+/* FIXME: remove these */
+#include <stdio.h>
+#include <threads/thread.h>
 
 #define SWAP_FULL ((block_sector_t)-1)
 #define NO_SWAP SWAP_FULL
@@ -30,6 +33,7 @@ swap_write (const void *frame_start, size_t frame_size)
 {
   size_t num_sectors = swap_num_sectors (frame_size);
   size_t swap_start = swap_get_available_sectors (SWAP_MAX_SECTORS);
+
   if (swap_start == SWAP_FULL)  
     PANIC ("no available swap slots");
 
@@ -42,6 +46,8 @@ swap_write (const void *frame_start, size_t frame_size)
   return (swap_descriptor) swap_start;
 }
 
+/* Reads a page worth of swap sectors starting at sd into frame_start.
+   Also marks these sectors as free. */
 size_t
 swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
 {
