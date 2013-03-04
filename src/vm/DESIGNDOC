@@ -186,7 +186,10 @@ do something like store a pointer directly to a struct.
 
 Then, the aux_pte struct contains a direct reference to its frame or
 eviction locations so looking up the actual physical address/file 
-in which it lives is O(1).
+in which it lives is O(1). We didn't need anything more heavy weight
+because we realized that the only time we would be interested in a
+frame is when we also have a reference to the page or the resident
+page's vaddr.
 
 		       PAGING TO AND FROM DISK
 		       =======================
