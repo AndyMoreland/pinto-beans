@@ -36,15 +36,17 @@ struct aux_pt_entry
                           frame_table_entry for the
                           frame of the page */
 
-  union { /* Either the info needed for mmap or swap */
-    struct {
-      size_t offset; /* How far into the file we are */
-      size_t len; /* How much of the file to read */
-      struct file *fd; /* Which file we're reading from */
-    } mmap_info;
+  union 
+    { /* Either the info needed for mmap or swap */
+      struct
+        {
+          size_t offset;    /* How far into the file we are */
+          size_t len;       /* How much of the file to read */
+          struct file *fd;  /* Which file we're reading from */
+        } mmap_info;
 
-    swap_descriptor swap_info; /* Casted ID of the first swap sector */
-  };
+      swap_descriptor swap_info; /* Casted ID of the first swap sector */
+    };
 };
 
 static struct hash aux_pt; /* The aux page table */
@@ -103,7 +105,7 @@ page_create_mmap_page (struct file *fd, off_t offset, off_t len,
  
   entry->type = swap? SWAP_LAZY : MMAP;
   entry->writable = writable;
-  entry->mmap_info.fd = file_reopen (fd);
+  entry->mmap_info.fd = fd;
   entry->mmap_info.offset = offset;
   entry->mmap_info.len = len;
   if (entry->mmap_info.fd == NULL)
@@ -114,7 +116,10 @@ page_create_mmap_page (struct file *fd, off_t offset, off_t len,
   return true;
 }
 
-/* Write out the mmapped page to its file if it is dirty */
+/* Possibly writes out an mmaped page to its backing file.
+ * Checks to see whether it actually is an MMAP page,
+ * writable, and dirty.
+ */
 static void
 page_possibly_write_mmap (struct aux_pt_entry *entry)
 {
@@ -158,13 +163,6 @@ page_free_page (struct list_elem *elem)
           if (entry->type == SWAP)
             swap_clear (entry->swap_info);
         }
-    }
-
-  if (entry->type == MMAP || (entry->type == SWAP_LAZY && entry->mmap_info.fd)) 
-    {
-      lock_acquire (&fs_lock);
-      file_close (entry->mmap_info.fd);
-      lock_release (&fs_lock);
     }
 
   if(pinned)
@@ -307,7 +305,12 @@ page_in_mmap (struct aux_pt_entry *entry, void *frame_addr)
 }
 
 /* Given an aux_pt entry and a frame_id, load `entry` into `new_frame`
-   according to its eviction strategy. */
+   according to its eviction strategy. 
+
+   SWAP_LAZY -- load backing mmap, but then change to swap
+   SWAP -- load in from swap, if it has been swapped before
+   MMAP -- load in from file
+ */
 static void 
 page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
 {
@@ -318,33 +321,23 @@ page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
       if (!entry->mmap_info.fd)
         memset (frame_addr, 0, PGSIZE);
       else
-        {
-          page_in_mmap (entry, frame_addr);
-          lock_acquire (&fs_lock);
-          file_close (entry->mmap_info.fd);
-          lock_release (&fs_lock);
-        }
+        page_in_mmap (entry, frame_addr);
 
       entry->type = SWAP;
     }
-
-  else 
-    switch (entry->type) 
-      {
-      case SWAP:
-        if (!first_load)
-          {
-            size_t bytes = swap_read (frame_addr, entry->swap_info, PGSIZE);
-            if (bytes != PGSIZE)
-              PANIC ("only read %d bytes from frame into 0x%p", (int) bytes, new_frame);
-          }
-        break;
-      case MMAP:
-        page_in_mmap (entry, frame_addr);
-        break;
-      default:
-        PANIC ("unrecognized page type %d", entry->type);
-      }
+  else if (entry->type == SWAP)
+    {
+      if (!first_load)
+        {
+          size_t bytes = swap_read (frame_addr, entry->swap_info, PGSIZE);
+          if (bytes != PGSIZE)
+            PANIC ("only read %d bytes from frame into 0x%p", (int) bytes, new_frame);
+        }
+    }
+  else if (entry->type == MMAP)
+    page_in_mmap (entry, frame_addr);
+  else
+    PANIC ("unrecognized page type %d", entry->type);
 }
 
 /* Hash function for the aux_pt hash table.
@@ -372,7 +365,6 @@ page_less (const struct hash_elem *ae, const struct hash_elem *be, void *aux UNU
 /* Constructor for an aux_pt_entry for user `vaddr` in the
    current thread. NULL is returned if the vaddr's page already
    has an entry or if malloc fails. */
-
 static struct aux_pt_entry *
 page_create_entry (void *vaddr)
 {
@@ -400,7 +392,6 @@ page_lookup_entry (void *user_vaddr, uint32_t *pd)
 {
   struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = pd };
   
-  /* FIXME: andy added this lock acquire -- shouldn't we? */
   lock_acquire (&aux_pt_lock);
   struct hash_elem *result = hash_find(&aux_pt, &query.elem);
   lock_release (&aux_pt_lock);

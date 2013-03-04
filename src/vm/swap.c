@@ -101,7 +101,7 @@ swap_num_sectors (size_t frame_size)
   return count;
 }
 
-/* Returns the block device in BLOCK_SWAP mode. */
+/* Returns the block device for BLOCK_SWAP mode. */
 static struct block*
 swap_get_device (void)
 {
@@ -112,7 +112,7 @@ swap_get_device (void)
 static block_sector_t 
 swap_get_available_sectors (size_t count)
 {
-  // look for 1 consecutive 'false' starting at 0
+  // look for count consecutive 'false' starting at 0
   lock_acquire (&swap_used_slots_lock);
   size_t free = bitmap_scan_and_flip (swap_used_slots, 0, count, false);
   lock_release (&swap_used_slots_lock);

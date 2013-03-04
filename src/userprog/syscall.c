@@ -50,16 +50,30 @@ static bool syscall_verify_pointer_offset (void *vaddr, size_t offset, struct li
 static bool syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp);
 static void syscall_cleanup_pins_and_exit (int message, struct list *pin_list);
 
-struct file_descriptor {
-  struct list_elem elem;
-  struct file *f;
-  int fd_id;
-};
+struct file_descriptor 
+  {
+    struct list_elem elem;
+    struct file *f;
+    int fd_id;
+  };
 
-struct pinned_page {
-  void *uaddr;
-  struct list_elem elem;
-};
+struct pinned_page 
+  {
+    void *uaddr;
+    struct list_elem elem;
+  };
+
+/* mmap implementation */
+struct mmap_descriptor
+  {
+    int mmap_id;            /* user-id for the mmap */
+    void *start;            /* starting virtual address of mmap */
+    off_t pages;            /* number of mmaped pages */
+    struct file *file;      /* file; reopened by us, need to close */
+    struct list_elem elem;  /* elem in threads mmap_descriptor list */
+  };
+
+static void syscall_do_munmap (struct mmap_descriptor *md);
 
 /* Return a new FD ID for the current thread. Starts at FIRST_FD_ID.  */
 static int
@@ -133,6 +147,14 @@ syscall_cleanup_process_data (void)
     {
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
+    }
+
+  for (e = list_begin (&t->mmap_descriptors);
+       e != list_end (&t->mmap_descriptors);
+       e = list_begin (&t->mmap_descriptors))
+    {
+      struct mmap_descriptor *md = list_entry (e, struct mmap_descriptor, elem);
+      syscall_do_munmap (md);
     }
 
   lock_acquire (&fs_lock);
@@ -434,7 +456,7 @@ syscall_open (struct intr_frame *f, struct list *pin_list) {
     f->eax = FILE_FAILURE;
 }
 
-void
+static void
 syscall_do_close (int fd_id)
 {
   struct file_descriptor *fd = syscall_get_fd (fd_id);
@@ -642,17 +664,8 @@ syscall_wait (struct intr_frame *f, struct list *pin_list)
   f->eax = process_wait (pid_copy);
 }
 
-/* mmap implementation */
-struct mmap_descriptor
-  {
-    int mmap_id;
-    void *start;
-    off_t pages;
-    struct list_elem elem;
-  };
-
 static struct mmap_descriptor * 
-syscall_mmap_descriptor_create (void *start, off_t pages)
+syscall_mmap_descriptor_create (struct file *file, void *start, off_t pages)
 {
   struct mmap_descriptor *md = malloc (sizeof (struct mmap_descriptor));
   if (!md)
@@ -661,6 +674,7 @@ syscall_mmap_descriptor_create (void *start, off_t pages)
   md->mmap_id = syscall_get_new_fd_id (); 
   md->start = start;
   md->pages = pages;
+  md->file = file;
   list_push_back (&thread_current ()->mmap_descriptors, &md->elem);
   return md;
 }
@@ -692,7 +706,8 @@ syscall_do_mmap_pages (struct file *fd_raw, void *vaddr)
     return MMAP_FAILURE;
 
   lock_acquire (&fs_lock);
-  off_t len = file_length (fd_raw);
+  struct file *file = file_reopen (fd_raw);
+  off_t len = file_length (file);
   off_t pages;
  
   for (pages = 0; pages * PGSIZE < len; ++pages)
@@ -703,7 +718,7 @@ syscall_do_mmap_pages (struct file *fd_raw, void *vaddr)
         size = PGSIZE;
 
       if (!is_user_vaddr (cursor)
-         || !page_create_mmap_page (fd_raw, pages * PGSIZE, size, 
+         || !page_create_mmap_page (file, pages * PGSIZE, size, 
            cursor, true, false))
         { 
           lock_release (&fs_lock);
@@ -714,7 +729,7 @@ syscall_do_mmap_pages (struct file *fd_raw, void *vaddr)
 
   lock_release (&fs_lock);
   struct mmap_descriptor *d = 
-    syscall_mmap_descriptor_create (vaddr, pages);
+    syscall_mmap_descriptor_create (file, vaddr, pages);
   if (!d)
     {
       page_free_range (vaddr, pages);
@@ -743,6 +758,17 @@ syscall_mmap (struct intr_frame *f, struct list *pin_list)
 }
 
 static void 
+syscall_do_munmap (struct mmap_descriptor *md)
+{
+  list_remove (&md->elem);
+  page_free_range (md->start, md->pages);
+  lock_acquire (&fs_lock);
+  file_close (md->file);
+  lock_release (&fs_lock);
+  free (md);
+}
+
+static void 
 syscall_munmap (struct intr_frame *f, struct list *pin_list)
 {
   int32_t *mmapid;
@@ -751,10 +777,6 @@ syscall_munmap (struct intr_frame *f, struct list *pin_list)
 
   struct mmap_descriptor *md = syscall_get_mmap_descriptor (*mmapid);
   if (md)
-    {
-      list_remove (&md->elem);
-      page_free_range (md->start, md->pages);
-      free (md);
-    }
+    syscall_do_munmap (md);
 }
 
