@@ -90,10 +90,8 @@ frame_get_kernel_addr (frame_id frame)
 void 
 frame_pin (frame_id frame)
 {
-  // printf ("pin %p for [%d]\n", frame, thread_current ()->tid);
   lock_acquire (&frame_entry (frame)->pin_lock);
-  // printf ("pinned %p\n", frame);
-}
+}   
 
 void 
 frame_unpin (frame_id frame)

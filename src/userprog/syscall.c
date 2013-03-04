@@ -633,7 +633,10 @@ syscall_wait (struct intr_frame *f, struct list *pin_list)
   if (!syscall_pointer_to_arg (f, 1, (void **) &pid, pin_list))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
-  f->eax = process_wait (*pid);
+  int pid_copy = *pid;
+  syscall_cleanup_pins (pin_list);
+
+  f->eax = process_wait (pid_copy);
 }
 
 /* mmap implementation */
