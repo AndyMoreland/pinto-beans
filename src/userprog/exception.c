@@ -8,7 +8,7 @@
 #include "threads/vaddr.h"
 
 #define STACK_GROWTH_TOLERANCE 64
-#define MAX_STACK_SIZE (1024 * 1024)
+#define MAX_STACK_SIZE (1024 * 1024 * 8)
 #define STACK_BOTTOM 0xbff00000
 
 /* Number of page faults processed. */

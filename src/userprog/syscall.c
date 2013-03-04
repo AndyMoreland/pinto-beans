@@ -17,6 +17,9 @@
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
 #define MMAP_FAILURE -1
+/* FIXME: should de-duplicate these constants */
+/* FIXME: re-calc stack_bottom */
+#define MAX_STACK_SIZE (1024 * 1024 * 8)
 #define STACK_BOTTOM 0xbff00000
 #define STACK_GROWTH_TOLERANCE 64
 
