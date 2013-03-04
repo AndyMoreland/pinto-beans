@@ -12,11 +12,8 @@
 #include "swap.h"
 #include <stdio.h>
 
-/* API: 
- * look up vaddr and get information about it
- * create a page at an addr (called to load an executable or extend stack)
- * reinstate page @ an addr (might be part of looking up a vaddr)
- */
+/* This enum represents the possible eviction strategies
+   for a page. */
 enum page_type
   {
     SWAP,
@@ -24,46 +21,56 @@ enum page_type
     MMAP
   };
 
+/* This struct stores all of the information that we keep
+   in the aux page table about a page */
 struct aux_pt_entry
 {
-  struct hash_elem elem;
-  struct list_elem thread_pages_elem;
-  void *user_addr; /* key */
-  uint32_t *pd;
-  /* Store swap slot or the file/offset to read from */
-  /* Might want an ENUM to track which mode this page is -- for instance,
-     if it is an mmapped file or if it is just swapped out. */
-  enum page_type type;
-  bool writable;
-  frame_id frame;
+  struct hash_elem elem; /* Hash table element */
+  struct list_elem thread_pages_elem; /* For a thread's page list */
+  void *user_addr; /* User VADDR used as hash key */
+  uint32_t *pd;    /* User pagedir */
 
-  union {
+  enum page_type type; /* Eviction strategy */
+  bool writable;       /* If the page if read-only */
+  frame_id frame;      /* Casted pointer to the 
+                          frame_table_entry for the
+                          frame of the page */
+
+  union { /* Either the info needed for mmap or swap */
     struct {
-      size_t offset;
-      size_t len;
-      struct file *fd;
+      size_t offset; /* How far into the file we are */
+      size_t len; /* How much of the file to read */
+      struct file *fd; /* Which file we're reading from */
     } mmap_info;
-    swap_descriptor swap_info;
+
+    swap_descriptor swap_info; /* Casted ID of the first swap sector */
   };
 };
 
-static struct hash aux_pt;
-static struct lock aux_pt_lock;
+static struct hash aux_pt; /* The aux page table */
+static struct lock aux_pt_lock; /* Lock for the aux page table -- 
+                                   acquired before all operations on it. */
 
 static unsigned hash_address (const struct hash_elem *e, void *aux);
-static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux);
+static bool page_less (const struct hash_elem *a, 
+                       const struct hash_elem *b, void *aux);
 static struct aux_pt_entry *page_create_entry (void *vaddr);
 static struct aux_pt_entry *page_lookup_current (void *user_vaddr);
 static struct aux_pt_entry *page_lookup_entry (void *user_vaddr, uint32_t *pd);
 static bool page_is_resident (struct aux_pt_entry *entry);
 static void page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame);
 
+/* Initialize lock and page table */
 void 
 page_init (void)
 {
   hash_init (&aux_pt, hash_address, page_less, NULL);
   lock_init (&aux_pt_lock);
 }
+
+/* Constructor for creating a new aux_pt_entry with a swap eviction strat.
+   Lazily paged in.
+   False if unable to malloc. */
 
 bool 
 page_create_swap_page (void *vaddr, bool zeroed, bool writable) 
@@ -83,6 +90,9 @@ page_create_swap_page (void *vaddr, bool zeroed, bool writable)
   return true;
 }
 
+/* Constructor for an aux_pt_entry with an mmap strat. 
+   Lazily paged in.
+   False if unable to malloc or open file. */
 bool 
 page_create_mmap_page (struct file *fd, off_t offset, off_t len,
                        void *vaddr, bool writable, bool swap)
@@ -96,9 +106,15 @@ page_create_mmap_page (struct file *fd, off_t offset, off_t len,
   entry->mmap_info.fd = file_reopen (fd);
   entry->mmap_info.offset = offset;
   entry->mmap_info.len = len;
+  if (entry->mmap_info == NULL)
+    {
+      free (entry);
+      return false;
+    }
   return true;
 }
 
+/* Write out the mmapped page to its file if it is dirty */
 static void
 page_possibly_write_mmap (struct aux_pt_entry *entry)
 {
@@ -113,6 +129,10 @@ page_possibly_write_mmap (struct aux_pt_entry *entry)
     }
 }
 
+/* Perform the necessary housekeeping in order to free a page.
+   Will handle cleaning up its mmap file or swap space.
+   If it is resident, the frame will be freed. 
+   Takes the list_elem from a thread's page_list. */
 void
 page_free_page (struct list_elem *elem)
 {
@@ -122,9 +142,7 @@ page_free_page (struct list_elem *elem)
   lock_acquire (&aux_pt_lock);
   hash_delete (&aux_pt, &entry->elem);
   lock_release (&aux_pt_lock);
-
   bool pinned = false;
-
 
   if (entry->frame != FRAME_INVALID) 
     {
@@ -136,7 +154,6 @@ page_free_page (struct list_elem *elem)
         }
       else
         {
-          /* FIXME: this variable is bogus */
           pinned = true;
           if (entry->type == SWAP)
             swap_clear (entry->swap_info);
@@ -156,6 +173,10 @@ page_free_page (struct list_elem *elem)
   free (entry);
 }
 
+/* Frees `count` pages starting at start_vaddr
+   using page_free_page. Properly skips already freed pages. 
+   Returns true if no pages were skipped, false otherwise. */
+
 bool 
 page_free_range (void *start_vaddr, unsigned count)
 {
@@ -172,19 +193,26 @@ page_free_range (void *start_vaddr, unsigned count)
   return true;
 }
 
-
+/* Returns true if the page exists in the aux_pt, false otherwise */
 bool 
 page_exists (void *vaddr, uint32_t *pd)
 {
   return page_lookup_entry (vaddr, pd) != NULL;
 }
 
+/* Returns true if the page specified by (vaddr, pd) is marked as
+   writable in the aux pt */
 bool
 page_writable (void *vaddr, uint32_t *pd)
 {
   return page_lookup_entry (vaddr, pd)->writable;
 }
 
+/* Attempts to page in the page located at `vaddr` for the 
+   current thread. 
+   It is incorrect to page_in a resident page.
+   The page is not pinned.
+   Returns false if it cannot page_in_and_pin it, true otherwise. */
 bool
 page_in (void *vaddr) 
 {
@@ -202,9 +230,10 @@ page_in (void *vaddr)
 }
 
 /* Pages out the given page. It is assumed that this page is already
- * pinned externally. This operation will not release the pin on
- * the corresponding page.
- */
+   pinned externally. This operation will not release the pin on
+   the corresponding page. 
+   The eviction strategy is chosen according to `page_type`
+   It is incorrect to page_out a non-resident page. */
 void 
 page_out (void *vaddr, uint32_t *pd)
 {
@@ -229,6 +258,10 @@ page_out (void *vaddr, uint32_t *pd)
     }
 }
 
+/* Pages in the page specified by user_vaddr and the current thread's
+   pd. The page will be pinned at the point of return.
+   If the page does not exist in the aux_pt then false is returned.
+*/
 bool page_in_and_pin (void *user_vaddr)
 {
   struct aux_pt_entry *entry = page_lookup_current (user_vaddr);
@@ -251,6 +284,8 @@ bool page_in_and_pin (void *user_vaddr)
   return true;
 }
 
+/* Release the pin on a page specified by user_vaddr in the current 
+   thread. */
 void page_unpin (void *user_vaddr)
 {
   struct aux_pt_entry *entry = page_lookup_current (user_vaddr);
@@ -258,6 +293,9 @@ void page_unpin (void *user_vaddr)
   frame_unpin (entry->frame);
 }
 
+/* Helper function for loading an mmap'd page from its backing file.
+   Entry corresponds to the page's aux_pt entry and frame_addr is a
+   kernel virtual address to load the data into. */
 static void 
 page_in_mmap (struct aux_pt_entry *entry, void *frame_addr)
 {
@@ -268,6 +306,8 @@ page_in_mmap (struct aux_pt_entry *entry, void *frame_addr)
   memset ((int8_t *)frame_addr + bytes, 0, PGSIZE - bytes);
 }
 
+/* Given an aux_pt entry and a frame_id, load `entry` into `new_frame`
+   according to its eviction strategy. */
 static void 
 page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
 {
@@ -307,12 +347,16 @@ page_setup_contents (struct aux_pt_entry *entry, frame_id new_frame)
       }
 }
 
+/* Hash function for the aux_pt hash table.
+   Hashes the page_no of the given hash_elem's user_addr. */
 static unsigned 
 hash_address (const struct hash_elem *e, void *aux UNUSED)
 {
   return hash_int (pg_no (hash_entry (e, struct aux_pt_entry, elem)->user_addr));
 }
 
+/* Less function for the aux_pt hash table.
+   Compares lexicographically on (pd, uvaddr) */
 static bool 
 page_less (const struct hash_elem *ae, const struct hash_elem *be, void *aux UNUSED)
 {
@@ -324,6 +368,10 @@ page_less (const struct hash_elem *ae, const struct hash_elem *be, void *aux UNU
   else
     return pg_no (a->user_addr) < pg_no (b->user_addr);
 }
+
+/* Constructor for an aux_pt_entry for user `vaddr` in the
+   current thread. NULL is returned if the vaddr's page already
+   has an entry or if malloc fails. */
 
 static struct aux_pt_entry *
 page_create_entry (void *vaddr)
@@ -345,6 +393,8 @@ page_create_entry (void *vaddr)
   return record;
 }
 
+/* Look up the aux_pt_entry for `user_vaddr` and `pd`.
+   Null if the address is not found in our aux_pt. */
 struct aux_pt_entry *
 page_lookup_entry (void *user_vaddr, uint32_t *pd)
 {
@@ -360,13 +410,15 @@ page_lookup_entry (void *user_vaddr, uint32_t *pd)
     return NULL;
 }
 
-/* Right now just returns our internal struct. Might want to clean this interface. */
+/* Like page_lookup_entry except it assumes the pd of the current thread. */
 struct aux_pt_entry *
 page_lookup_current (void *user_vaddr)
 {
   return page_lookup_entry (user_vaddr, thread_current ()->pagedir);
 }
 
+/* Returns true if the MMU's pagetable has the PTE_P bit set to 1 
+   for the user_addr, pd combo in `entry`. */
 static bool 
 page_is_resident (struct aux_pt_entry *entry)
 {

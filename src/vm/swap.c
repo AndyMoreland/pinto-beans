@@ -4,9 +4,6 @@
 #include <debug.h>
 #include <threads/synch.h>
 #include "swap.h"
-/* FIXME: remove these */
-#include <stdio.h>
-#include <threads/thread.h>
 
 #define SWAP_FULL ((block_sector_t)-1)
 #define NO_SWAP SWAP_FULL
@@ -15,9 +12,13 @@ static struct block *swap_get_device (void);
 static block_sector_t swap_get_available_sectors (size_t count);
 static size_t swap_num_sectors (size_t frame_size);
 
+/* A bitmap that represents used swap sectors. */
 static struct bitmap *swap_used_slots;
+
+/* Lock to protect the aformentioned bitmap. */
 static struct lock swap_used_slots_lock;
 
+/* Initialize the swap subsytem. */
 void
 swap_init (void)
 {
@@ -28,6 +29,10 @@ swap_init (void)
   bitmap_set_all (swap_used_slots, false);
 }
 
+/* Writes `frame_size` bytes from `frame_start` to consecutive sectors
+   on disk. A `swap_descriptor` is returned representing the start
+   of the sectors.
+   Panics if there is no space. */
 swap_descriptor
 swap_write (const void *frame_start, size_t frame_size)
 {
@@ -68,6 +73,7 @@ swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
       cursor += BLOCK_SECTOR_SIZE;
     }
 
+  // Mark free
   lock_acquire (&swap_used_slots_lock);
   bitmap_set_multiple (swap_used_slots, swap_start, num_sectors, false);
   lock_release (&swap_used_slots_lock);
@@ -75,6 +81,7 @@ swap_read (void *frame_start, swap_descriptor sd, size_t bufsize)
   return cursor - (char *)frame_start;
 }
 
+/* Marks a page worth of sectors starting at `sd` as free. */
 void 
 swap_clear (swap_descriptor sd)
 {
@@ -84,6 +91,7 @@ swap_clear (swap_descriptor sd)
   lock_release (&swap_used_slots_lock);
 }
 
+/* Gets the number of sectors that we need to store `frame_size` bytes. */
 static size_t
 swap_num_sectors (size_t frame_size)
 {
@@ -93,12 +101,14 @@ swap_num_sectors (size_t frame_size)
   return count;
 }
 
+/* Returns the block device in BLOCK_SWAP mode. */
 static struct block*
 swap_get_device (void)
 {
   return block_get_role (BLOCK_SWAP);
 }
 
+/* Scans the swap bitmap once looking for contiguous space for a page. */
 static block_sector_t 
 swap_get_available_sectors (size_t count)
 {

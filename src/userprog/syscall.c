@@ -21,7 +21,7 @@
 /* FIXME: re-calc stack_bottom */
 #define MAX_STACK_SIZE (1024 * 1024 * 8)
 #define STACK_BOTTOM 0xbff00000
-#define STACK_GROWTH_TOLERANCE 64
+#define STACK_GROWTH_TOLERANCE 32
 
 
 static void syscall_handler (struct intr_frame *);
@@ -146,21 +146,19 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+/* Check to make sure that the entire buffer starting at `vaddr`
+   and extending `length` bytes is writeable. 
+   Returns true if so and false otherwise. */
 static bool
 syscall_verify_buffer_writable (void *vaddr, size_t length)
 {
-  // printf ("Verifying writable\n");
   struct thread *t = thread_current ();
-  // printf ("1\n");
   bool result = page_writable (vaddr, t->pagedir)
     && page_writable (vaddr + length, t->pagedir);
-  // printf ("yo. 2\n");
 
   size_t offset_tmp;
   for (offset_tmp = PGSIZE; offset_tmp < length; offset_tmp += PGSIZE)
     result = result && page_writable ((char *) vaddr + offset_tmp, t->pagedir);
-
-  // printf ("3\n");
 
   return result;
 }
@@ -241,6 +239,8 @@ syscall_verify_string (char *str, struct list *pin_list, void *esp)
   return valid;
 }
 
+/* Will attempt to grow the stack to include `uaddr`. 
+   Returns true if we decide that this is okay. */
 static bool
 syscall_potentially_grow_stack (void *uaddr, void *esp)
 {
@@ -249,16 +249,18 @@ syscall_potentially_grow_stack (void *uaddr, void *esp)
       && (STACK_BOTTOM < uaddr))
     {
       page_create_swap_page (pg_round_down (uaddr), true, true);
-      // printf ("Grew the stack!\n");
       return true;
     }
   return false;
 }
 
+/* Pins uaddr in the current pagedir if it can. Tracks this pin in `pin_list`.
+   Will attempt to grow the stack if there is no page found. 
+   Returns true if things are kosher -- either we pinned the page 
+   specified or grew the stack and pinned the page. False otherwise. */
 static bool
 syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
 {
-  // printf ("Ensuring [%p] is valid for esp: [%p]\n", uaddr, esp);
   struct list_elem *e;
   /* Check to see if we have already pinned this address' page */
   for (e = list_begin (pin_list); e != list_end (pin_list);
@@ -269,14 +271,12 @@ syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
         return true;
     }
 
-  // printf ("Trying to page in\n");
   /* If we successfully page it in then track it */
   if (page_in_and_pin (pg_round_down (uaddr)))
     {
       struct pinned_page *pp = malloc (sizeof (struct pinned_page));
       pp->uaddr = pg_round_down (uaddr);
       list_push_front (pin_list, &pp->elem);
-      // printf ("Successfully paged in!\n");
       return true;
     } 
   else
@@ -290,6 +290,7 @@ syscall_ensure_valid_page (void *uaddr, struct list *pin_list, void *esp)
     }
 }
 
+/* Release all of the pins in `pin_list`. */
 static void
 syscall_cleanup_pins (struct list *pin_list)
 {
@@ -301,6 +302,7 @@ syscall_cleanup_pins (struct list *pin_list)
     }
 }
 
+/* Release all of the pins in `pin_list` and exit with `message`. */
 static void
 syscall_cleanup_pins_and_exit (int message, struct list *pin_list)
 {
@@ -633,6 +635,7 @@ syscall_wait (struct intr_frame *f, struct list *pin_list)
   if (!syscall_pointer_to_arg (f, 1, (void **) &pid, pin_list))
     syscall_cleanup_pins_and_exit (SYSCALL_ERROR_EXIT_CODE, pin_list);
 
+  // this is to avoid a nasty deadlock
   int pid_copy = *pid;
   syscall_cleanup_pins (pin_list);
 

@@ -7,7 +7,7 @@
 #include "vm/page.h"
 #include "threads/vaddr.h"
 
-#define STACK_GROWTH_TOLERANCE 64
+#define STACK_GROWTH_TOLERANCE 32
 #define MAX_STACK_SIZE (1024 * 1024 * 8)
 #define STACK_BOTTOM 0xbff00000
 
@@ -140,37 +140,25 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
-  if (0) {
-    printf ("Page fault at %p: %s error %s page in %s context.\n",
-            fault_addr,
-            not_present ? "not present" : "rights violation",
-            write ? "writing" : "reading",
-            user ? "user" : "kernel");
-  }
-
+  /* All user rights violations are seg faults. */
   if (!not_present && user)
     thread_exit_with_message (SEG_FAULT_MESSAGE);
   
+  /* All access by the user to kernel memory is a seg fault. */
   if (!is_user_vaddr (fault_addr) && user)
     thread_exit_with_message (SEG_FAULT_MESSAGE);
 
+  /* If the page was simply not present... */
   else if (not_present)
     {
+      /* Try to page it in. */
       if (!page_in (fault_addr))
         {
+          /* If that fails, try to grow the stack. */
           void *esp = f->esp;
 
-          /* Need to make sure that we don't grow if we're waaaaaay too far down -- 
-             we're only checking that we're close to the ESP right now */
-          
-          /* Technically will grow up to 64 away -- FIXME */
-          /* printf ("Esp: [%p], Fault_addr: [%p], Phys_base: [%p], MaxStack: [%p], %lld, %lld, %lld\n", esp, fault_addr, PHYS_BASE, MAX_STACK_SIZE,
-                  ((int64_t) esp - (int64_t) fault_addr), ((int64_t) fault_addr - (int64_t) esp), 
-                  ((int64_t) PHYS_BASE - (int64_t) MAX_STACK_SIZE)); */
-
+          /* Check that the access was <= 32 bytes below the esp or above the esp but
+             within the max size of the stack. */
           if ((((int64_t) esp - (int64_t) fault_addr <= (int64_t) STACK_GROWTH_TOLERANCE)
                || (fault_addr >= esp))
               && (STACK_BOTTOM < fault_addr))

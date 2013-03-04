@@ -1,13 +1,3 @@
-/* Need to be able to get an address of a frame that we can write to.
-   Should evict a frame if it needs to.
-   Need to know what "evicting" means.
-   If the page was read only then eviction just means doing nothing.
-   Otherwise we need to write it back to its file or to swap.
-*/
-
-/* In order to work we need to store our kernel address.
-   We also need to store our user address for our evcition. */
-
 #include <debug.h>
 #include <list.h>
 #include <threads/synch.h>
@@ -18,24 +8,26 @@
 #include "frame.h"
 #include "page.h"
 
-
-/* FIXME remove this include */
-#include "threads/thread.h"
-
+/* Data that we store about each physical frame. */
 struct frame_table_entry
   {
-    void *frame_addr;
-    void *user_addr;
-    uint32_t *pd;
-    struct lock pin_lock;
-    struct list_elem elem;
-    bool is_dying;
+    void *frame_addr; /* Kernel virtual address of frame. */
+    void *user_addr;  /* User vaddr of page stored in frame. */
+    uint32_t *pd;     /* User pd for page stored in frame. */
+    struct lock pin_lock; /* Pin lock which is a monitor 
+                             for resident page & this frame. */
+    struct list_elem elem; /* elem for the frame table or free list. */
+    bool is_dying;        /* If we are in the process of freeing this frame. */
   };
 
+/* Pointer to the "clock hand" position in the frame_table list. */
 static struct frame_table_entry *clock_hand;
+/* Allocated frames are stored in this list. */
 static struct list frame_table;
-static struct lock frame_table_lock;
+/* Freed frames are stored in this list. */
 static struct list free_list;
+/* Protects the frame_table and the free_list */
+static struct lock frame_table_lock;
 
 static struct frame_table_entry *frame_entry (frame_id id);
 static struct frame_table_entry *frame_create_entry (void *vaddr, uint32_t *pd, void *frame);
@@ -44,6 +36,7 @@ static struct frame_table_entry *clock_evict (void);
 
 void frame_unpin (frame_id frame);
 
+/* Initialize lists and locks. */
 void frame_init (size_t num_user_pages UNUSED)
 {
   clock_hand = NULL;
@@ -56,6 +49,9 @@ void frame_pin (frame_id frame);
 void frame_unpin (frame_id frame);
 void frame_release_frame (frame_id frame);
 
+/* External API. Finds a frame for the page at (user_vaddr, pd).
+   Returns a casted pointer to the frame_table entry for the frame. 
+   Panics if it is unable to find space anywhere. */
 frame_id
 frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
 {
@@ -64,6 +60,8 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
   if (frame) {
     entry = frame_create_entry (user_vaddr, pd, frame);
     lock_acquire (&frame_table_lock);
+    // Make sure that the clock hand always points somewhere
+    // if there is something in the allocated list.
     if (!clock_hand)
       clock_hand = entry;
     lock_release (&frame_table_lock);
@@ -79,6 +77,8 @@ frame_get_frame_pinned (void *user_vaddr, uint32_t *pd)
   return entry;
 }
 
+/* Given a frame_id it returns the kernel addr of 
+   the physical frame. */
 void *
 frame_get_kernel_addr (frame_id frame) 
 {
@@ -87,24 +87,32 @@ frame_get_kernel_addr (frame_id frame)
   return frame_entry (frame)->frame_addr;
 }
 
+/* Pin the frame. */
 void 
 frame_pin (frame_id frame)
 {
   lock_acquire (&frame_entry (frame)->pin_lock);
 }   
 
+/* Unpin the frame. */
 void 
 frame_unpin (frame_id frame)
 {
   lock_release (&frame_entry (frame)->pin_lock);
 }
 
+/* Called when a page is being cleaned up. This
+   puts the frame in the free list. It is assumed that
+   the frame is pinned externally. */
 void
 frame_release_frame (frame_id frame)
 {
   ASSERT (frame);
   struct frame_table_entry *entry = frame_entry (frame);
   entry->is_dying = true;
+  // We have to unpin here in order to avoid deadlock.
+  // We usually acquire frame_table_lock and then pin_lock
+  // If we don't unpin then we'd have a potential for a bad interleaving.
   frame_unpin (frame);
   lock_acquire (&frame_table_lock);
   entry->is_dying = false;
@@ -121,12 +129,18 @@ frame_release_frame (frame_id frame)
   lock_release (&frame_table_lock);
 }
 
+/* Given a frame_id we return the associated frame_table_entry. 
+   This method is used in order to permit more layers of indirection
+   if desired. */
 static struct frame_table_entry *
 frame_entry (frame_id id)
 {
   return (struct frame_table_entry *)id;
 }
 
+/* Constructor for a frame_table_entry for `uvaddr`, `pd` and a 
+   kernel vaddr `frame`. 
+   The frame is returned pinned. */
 static struct frame_table_entry *
 frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
 {
@@ -145,6 +159,9 @@ frame_create_entry (void *vaddr, uint32_t *pd, void *frame)
   return entry;
 }
 
+/* Attempts to acquire the pin lock on `entry`. If it succeeds it will
+   check the dirty bit on the resident page. If that is 0, it will evict
+   the page and return "true". Else, false. */
 static bool
 frame_try_evict (struct frame_table_entry *entry)
 {
@@ -163,11 +180,15 @@ frame_try_evict (struct frame_table_entry *entry)
     }
 }
 
+/* Run our clock eviction algorithm on frame_table list.
+   Iterates until we find somethign to free. 
+   Returns NULL if we loop around twice and nothing is evicted. */
 static struct frame_table_entry * 
 clock_evict (void)
 {
   lock_acquire (&frame_table_lock);
   struct frame_table_entry *entry;
+  // If we find something in the free list we can just return that.
   if (!list_empty (&free_list))
     {
       entry = list_entry (list_begin (&free_list), struct frame_table_entry, elem);
@@ -175,7 +196,9 @@ clock_evict (void)
       list_remove (&entry->elem);
       list_push_back (&frame_table, &entry->elem);
     }
-  else if (!clock_hand)   
+  else if (!clock_hand)
+    // something has gone terribly wrong -- there is nothing in the free list,
+    // there is nothing to palloc and there is nothing in the frame_table.
     entry = NULL;
   else
     {
@@ -202,6 +225,7 @@ clock_evict (void)
   return entry;
 }
 
+/* Advance the clock hand. Assumes that the frame table is externally locked. */
 static void 
 advance_clock_hand (void)
 {
@@ -210,10 +234,10 @@ advance_clock_hand (void)
   else 
     {
       clock_hand = list_entry (list_next (&clock_hand->elem),
-        struct frame_table_entry, elem);
+                               struct frame_table_entry, elem);
         
       if (&clock_hand->elem == list_end (&frame_table))
         clock_hand = list_entry (list_begin (&frame_table),
-          struct frame_table_entry, elem);
+                                 struct frame_table_entry, elem);
     }
 }
