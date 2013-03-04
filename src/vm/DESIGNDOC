@@ -272,13 +272,13 @@ a lock on the frame table.
 At each entry we attempt to acquire a "pin" lock on the entry itself.
 If we are able to acquire then pin lock then we know that no one else
 is currently touching it. In this case, we check its accessed bit.
-If it has not been accessed, we drop evict this frame and drop the
+If it has not been accessed, we evict this frame and drop the
 global lock. Otherwise, we clear its accessed bit and continue on.
 
 (We loop at most twice through the entire frame table, so we could end
 up evicting a frame that has been accessed recently. However, after
 two attempts, if we still cannot pin anything, then everything is
-pinned and we are unable to evict anything, and panic.)
+pinned or highly active and we are unable to evict anything, so we panic.)
 
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
@@ -296,6 +296,10 @@ to null. Instead, all that we do is ask the page to evict itself.
 As part of this eviction, the page stores where it evicted itself to.
 This can be a file or swap slot.
 
+This also means that any page that has ever been resident ever has
+some lock (the pin_lock of its last frame) that we are able to 
+acquire in order to protect it.
+
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
@@ -310,6 +314,9 @@ check to make sure that increasing the size of the stack further would
 not exceed a maximum stack size of 8mb. If all of these conditions are
 met then we grow the stack.
 
+Note that this does allow holes (unmapped memory) in the stack. We feel
+that allowing a sparse stack is a feature.
+
 ---- SYNCHRONIZATION ----
 
 >> B5: Explain the basics of your VM synchronization design.  In
@@ -321,7 +328,8 @@ The four conditions for deadlock are all of (1) limited access,
 (2) no preemption, (3) multiple independent requests, and (4)
 circularity in resources ownership requests. As in most systems,
 the first three are unavoidable in our implementation, so we
-chose to treat and prevent (4).
+chose to treat and prevent (4), although we do limit (3) when 
+possible.
 
 Our virtual memory implementation uses locks to prevent most of
 the interesting concurrency problems: these locks are the
@@ -350,6 +358,15 @@ Finally, aux_page_table operations are all done either independently
 of any frame operations (i.e. when pages are first created, but have
 not been given a resident frame) or while a page's own frame's pin
 is held (so processes always acquire frame pins before aux_pt_lock).
+
+One particularly notable cause of deadlock is that that comes from
+syscalls page faulting. Since syscalls are executed while potentially
+holding the file system lock if we page then our page fault handler
+could try to evict some frame to swap. This would cause a deadlock
+on ourself since we hold the device driver lock and are also trying
+to acquire it. We avoid this by pre-emptively pinning every page
+in any buffer that is read/written from in a syscall so as to
+prevent page faults.
 
 
 >> B6: A page fault in process P can cause another process Q's frame
@@ -393,7 +410,7 @@ Before we changed it it was responsible for making sure that all
 addresses were inside of mapped pages. Now it is responsible for
 paging_in_and_pin'ing any page that is referenced. If it fails to
 page_in_and_pin a page then it means that the address is invalid.
-In this case, we attempt to grow the stack but if we choose not to
+In this case, we attempt to grow the stack but if this fails
 then we kill the process.
 
 (By pinning pages that are accessed through user syscalls, they 
