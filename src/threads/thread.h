@@ -131,11 +131,12 @@ struct thread
     struct file *executable;            /* Pointer to file that thread is running. */
     struct list_elem child_elem;        /* List elem for child_processes list */
     struct list child_processes;        /* List of child processes */
-    struct pdata *pdata;                        /* Pointer to process data struct, if used */
+    struct pdata *pdata;                /* Pointer to process data struct, if used */
     struct thread *parent_process;      /* Pointer to parent process. */
 #endif
 
-    struct list pages_list;
+    /* Used by vm/page.c and userprog/process.c */
+    struct list pages_list;             /* List of processes that are owend by this thread. */
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */

@@ -400,7 +400,6 @@ page_lookup_entry (void *user_vaddr, uint32_t *pd)
 {
   struct aux_pt_entry query = { .user_addr = user_vaddr, .pd = pd };
   
-  /* FIXME: andy added this lock acquire -- shouldn't we? */
   lock_acquire (&aux_pt_lock);
   struct hash_elem *result = hash_find(&aux_pt, &query.elem);
   lock_release (&aux_pt_lock);

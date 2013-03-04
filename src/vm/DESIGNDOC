@@ -20,8 +20,8 @@ Andy Moreland <andymo@stanford.edu>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-Alex Ryan: 
-Andy Moreland: 
+Alex Ryan: everything
+Andy Moreland: everything
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -35,6 +35,103 @@ Andy Moreland:
 >> A1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thread.h's struct thread:
+
+struct list pages_list;
+
+`pages_list` is a list of pages spawned by the given thread. It's used
+  during cleanup.
+
+In page.c:
+
+enum page_type
+  {
+    SWAP,
+    SWAP_LAZY,
+    MMAP
+  }
+
+This enum is used in order to track what eviction policy we pursue for
+  a given page.
+
+`SWAP` means that it is swapped in and out of swap on disk.
+`SWAP_LAZY` means that at first it is paged in from a file, but if
+  it gets dirty then we swap it out. For data segments, basically.
+`MMAP` means that it's backed by a file and should be evicted to it
+  and read in from it.
+
+struct aux_pt_entry
+{
+  struct hash_elem elem; /* Hash table element */
+  struct list_elem thread_pages_elem; /* Elem for a thread's page list */
+  void *user_addr; /* User VADDR used as hash key */
+  uint32_t *pd;    /* User pagedir */
+
+  enum page_type type; /* Eviction strategy */
+  bool writable;       /* If the page if read-only */
+  frame_id frame;      /* Casted pointer to the 
+                          frame_table_entry for the
+                          frame of the page if resident */
+  
+  ...
+
+};
+
+This is the struct that we use in order to store information in our aux
+page table about pages. Everything else is self-evident
+in the comments I hope. The struct is dynamically allocated.
+
+static struct hash aux_pt; /* The aux page table */
+static struct lock aux_pt_lock; /* Lock for the aux page table -- 
+                                   acquired before all operations on it. */
+
+Just FYI we decided to call it the "aux" page table instead of the "suppl-
+ementary" page table because it's easier to type :-).
+
+In frame.h:
+
+typedef void *frame_id;
+
+we typedef'd void * to frame_id in order to hide the fact that the id
+that we return to clients (namely page.c) from our API calls is actually
+a void *.
+
+In frame.c:
+
+struct frame_table_entry
+  {
+    void *frame_addr; /* Kernel virtual address of frame. */
+    void *user_addr;  /* User vaddr of page stored in frame. */
+    uint32_t *pd;     /* User pd for page stored in frame. */
+    struct lock pin_lock; /* Pin lock which is a monitor 
+                             for resident page & this frame. */
+    struct list_elem elem; /* elem for the frame table or free list. */
+    bool is_dying;        /* If we are in the process of freeing this frame. */
+  };
+
+This struct is stored either in our frame_table list or in our free_list.
+It stores everything we know about a given frame that is allocated. The
+struct itself is dynamically allocated as necessary.
+
+All of the attributes are commented.
+
+/* Pointer to the "clock hand" position in the frame_table list. */
+static struct frame_table_entry *clock_hand;
+/* Allocated frames are stored in this list. */
+static struct list frame_table;
+/* Freed frames are stored in this list. */
+static struct list free_list;
+/* Protects the frame_table and the free_list */
+static struct lock frame_table_lock;
+
+The `frame_table_lock` is acquired before operations are done on the frame 
+  table. Things like adding a new frame or evicting a frame require a
+  brief acquisition of the frame_table_lock.
+
+The `clock_hand` points to the current position of the clock hand that
+  we need for our clock hand eviction algorithm.
+
 
 ---- ALGORITHMS ----
 
@@ -111,6 +208,44 @@ in which it lives is O(1).
 >> B1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+In swap.h:
+
+typedef block_sector_t swap_descriptor;
+
+We typedef block_sector_t so that our clients (namely page/frame.c) don't
+  need to worry about how swap is laid out on disk.
+
+In swap.c:
+
+/* A bitmap that represents used swap sectors. */
+static struct bitmap *swap_used_slots;
+
+/* Lock to protect the aformentioned bitmap. */
+static struct lock swap_used_slots_lock;
+
+In page.c's `struct page`
+
+  union { /* Either the info needed for mmap or swap */
+    struct {
+      size_t offset; /* How far into the file we are */
+      size_t len; /* How much of the file to take */
+      struct file *fd; /* Which file we're backed by */
+    } mmap_info;
+
+    swap_descriptor swap_info; /* Casted ID of the first swap sector */
+  };
+
+We store everything we need to page in or evict here.
+  Since any given page will only ever be stored in swap XOR
+  backed by a file we store this data in a union to save a little
+  memory.
+
+`swap_descriptor` is a typecasted integer which represents the first
+  sector in the swap space that stores this fram.
+
+`mmap_info` stores information about where in the given file to look for
+  reading this page back from -- or for writing it to.
 
 ---- ALGORITHMS ----
 
@@ -236,6 +371,24 @@ block /* FIXME: finish this answer */
 >> C1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+Inside of thread.h's struct thread:
+
+struct list mmap_descriptors;       /* List of mmaps opened by thread. */
+
+`mmap_descriptors` is a list of all of the mmap descriptors that were
+  opened by this process.
+
+struct mmap_descriptor
+  {
+    int mmap_id;
+    void *start;
+    off_t pages;
+    struct list_elem elem;
+  };
+
+//fixme: finish this
+
 
 ---- ALGORITHMS ----
 

@@ -6,10 +6,7 @@
 #include "threads/thread.h"
 #include "vm/page.h"
 #include "threads/vaddr.h"
-
-#define STACK_GROWTH_TOLERANCE 32
-#define MAX_STACK_SIZE (1024 * 1024 * 8)
-#define STACK_BOTTOM 0xbff00000
+#include "userprog/syscall.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
