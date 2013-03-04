@@ -106,7 +106,7 @@ page_create_mmap_page (struct file *fd, off_t offset, off_t len,
   entry->mmap_info.fd = file_reopen (fd);
   entry->mmap_info.offset = offset;
   entry->mmap_info.len = len;
-  if (entry->mmap_info == NULL)
+  if (entry->mmap_info.fd == NULL)
     {
       free (entry);
       return false;
