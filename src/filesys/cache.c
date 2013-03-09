@@ -33,7 +33,8 @@ struct cache_entry
 static struct hash cache_hash;
 static struct cache_entry *cache_entries;
 static int cache_size;
-static int cache_clock_cursor; static struct lock cache_lock;
+static int cache_clock_cursor; 
+static struct lock cache_lock;
 
 static unsigned cache_hash_hash_func (const struct hash_elem *, void *);
 static bool cache_hash_less_func (const struct hash_elem *,
@@ -103,8 +104,39 @@ cache_write (enum block_type type, block_sector_t sector, const void *src)
       lock_acquire (&entry->entry_lock);
       memcpy (entry->data, src, BLOCK_SECTOR_SIZE);
       ++entry->release_cnt;
+      entry->flags |= DIRTY;
       lock_release (&entry->entry_lock);
     }
+}
+
+void cache_readahead (enum block_type type, block_sector_t sector)
+{
+  
+}
+
+void *
+cache_begin_transaction (enum block_type type, block_sector_t sector)
+{
+  struct cache_entry *entry = cache_retain (type, sector);
+  if (entry)
+    {
+      lock_acquire (&entry->entry_lock);
+      return entry->data;
+    }
+  return entry;
+}
+
+#define cache_entry(dat) ((struct cache_entry *) \
+        ((uint8_t *)dat - offsetof (struct cache_entry, data)))
+
+void 
+cache_end_transaction (void *cache_block, bool dirty)
+{
+  struct cache_entry *entry = cache_entry (cache_block);
+  ++entry->release_cnt;
+  if (dirty)
+    entry->flags |= DIRTY;
+  lock_release (&entry->entry_lock);
 }
 
 static unsigned 
@@ -139,12 +171,17 @@ cache_lookup (enum block_type type, block_sector_t sector, bool create)
   entry_dummy.sector = sector;
 
   struct hash_elem *elem = hash_find (&cache_hash, &entry_dummy.elem);
+  struct cache_entry *entry;
   if (elem)
-    return hash_entry (elem, struct cache_entry, elem);
+    {
+      entry = hash_entry (elem, struct cache_entry, elem);
+      lock_acquire (&entry->entry_lock);
+    }
   else if (!create)
     return NULL; 
+  else
+    entry = cache_find_available ();
 
-  struct cache_entry *entry = cache_find_available ();
   if (entry)
     {
       cache_do_evict (entry, type, sector);
@@ -213,7 +250,7 @@ cache_retain (enum block_type type, block_sector_t sector)
   entry->flags |= ACCESSED;
   lock_release (&cache_lock);
 
-  lock_acquire (&entry->entry_lock);
+  // we already hold entry's lock through cache_lookup
   if (entry->flags & INIT)
     {
       entry->flags ^= INIT; 
