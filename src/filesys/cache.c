@@ -6,6 +6,7 @@
 #include "hash.h"
 #include "threads/malloc.h"
 #include "cache.h"
+#include "filesys.h"
 
 enum cache_flags
   {
@@ -18,7 +19,6 @@ enum cache_flags
 
 struct cache_entry
   {
-    enum block_type type;
     block_sector_t sector;
 
     enum cache_flags flags;   
@@ -41,12 +41,11 @@ static bool cache_hash_less_func (const struct hash_elem *,
                                   const struct hash_elem *, void *);
 
 static void cache_do_flush (struct cache_entry *);
-static void cache_do_evict (struct cache_entry *, enum block_type, block_sector_t);
+static void cache_do_evict (struct cache_entry *, block_sector_t);
 static void cache_do_disk_read (struct cache_entry *);
 static struct cache_entry *cache_find_available (void);
-static struct cache_entry *cache_lookup (enum block_type type, 
-                                         block_sector_t sector, bool create);
-static struct cache_entry *cache_retain (enum block_type type, block_sector_t sector);
+static struct cache_entry *cache_lookup (block_sector_t sector, bool create);
+static struct cache_entry *cache_retain (block_sector_t sector);
 
 void 
 cache_init (int size)
@@ -71,14 +70,13 @@ cache_init (int size)
 }
 
 void 
-cache_read (enum block_type type, block_sector_t sector, void *dst)
+cache_read (block_sector_t sector, void *dst)
 {
-  struct cache_entry *entry = cache_retain (type, sector);
+  struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
     {
-      printf ("warning: no disk cache available: reading (%d, %d)\n",
-              (int) type, (int) sector);
-      block_read (block_get_role (type), sector, dst);
+      printf ("warning: no disk cache available: reading %u\n", sector);
+      block_read (fs_device, sector, dst);
     }
   else
     {
@@ -90,14 +88,13 @@ cache_read (enum block_type type, block_sector_t sector, void *dst)
 }
 
 void 
-cache_write (enum block_type type, block_sector_t sector, const void *src)
+cache_write (block_sector_t sector, const void *src)
 {
-  struct cache_entry *entry = cache_retain (type, sector);
+  struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
     {
-      printf ("warning: no disk cache available: write (%d, %d)\n",
-              (int) type, (int) sector);
-      block_write (block_get_role (type), sector, src);
+      printf ("warning: no disk cache available: write %u\n", sector);
+      block_write (fs_device, sector, src);
     }
   else
     {
@@ -109,15 +106,15 @@ cache_write (enum block_type type, block_sector_t sector, const void *src)
     }
 }
 
-void cache_readahead (enum block_type type, block_sector_t sector)
+void cache_readahead (block_sector_t sector)
 {
   
 }
 
 void *
-cache_begin_transaction (enum block_type type, block_sector_t sector)
+cache_begin (block_sector_t sector)
 {
-  struct cache_entry *entry = cache_retain (type, sector);
+  struct cache_entry *entry = cache_retain (sector);
   if (entry)
     {
       lock_acquire (&entry->entry_lock);
@@ -130,7 +127,7 @@ cache_begin_transaction (enum block_type type, block_sector_t sector)
         ((uint8_t *)dat - offsetof (struct cache_entry, data)))
 
 void 
-cache_end_transaction (void *cache_block, bool dirty)
+cache_end (void *cache_block, bool dirty)
 {
   struct cache_entry *entry = cache_entry (cache_block);
   ++entry->release_cnt;
@@ -139,15 +136,26 @@ cache_end_transaction (void *cache_block, bool dirty)
   lock_release (&entry->entry_lock);
 }
 
+void 
+cache_flush_all (void)
+{
+  lock_acquire (&cache_lock);
+  int i;
+  for (i = 0; i < cache_size; ++i)
+    {
+      struct cache_entry *entry = &cache_entries[i];
+      lock_acquire (&entry->entry_lock);
+      cache_do_flush (entry);
+      lock_release (&entry->entry_lock);
+    }
+  lock_release (&cache_lock);
+}
+
 static unsigned 
 cache_hash_hash_func (const struct hash_elem *e, void *aux UNUSED)
 {
   struct cache_entry *entry = hash_entry (e, struct cache_entry, elem);
-  struct {
-    enum block_type type;
-    block_sector_t sector;
-  } id = { .type = entry->type, .sector = entry->sector };
-  return hash_bytes (&id, sizeof (id));
+  return hash_int ((int)entry->sector);
 }
 
 static bool 
@@ -157,17 +165,13 @@ cache_hash_less_func (const struct hash_elem *ae,
   struct cache_entry *a = hash_entry (ae, struct cache_entry, elem);
   struct cache_entry *b = hash_entry (be, struct cache_entry, elem);
   
-  if (a->type != b->type)
-    return a->type < b->type;
-  else
-    return a->sector < b->sector;
+  return a->sector < b->sector;
 }
 
 static struct cache_entry *
-cache_lookup (enum block_type type, block_sector_t sector, bool create)
+cache_lookup (block_sector_t sector, bool create)
 {
   struct cache_entry entry_dummy;
-  entry_dummy.type = type;
   entry_dummy.sector = sector;
 
   struct hash_elem *elem = hash_find (&cache_hash, &entry_dummy.elem);
@@ -184,7 +188,7 @@ cache_lookup (enum block_type type, block_sector_t sector, bool create)
 
   if (entry)
     {
-      cache_do_evict (entry, type, sector);
+      cache_do_evict (entry, sector);
       entry->flags |= INIT;
     }
   return entry;
@@ -201,7 +205,8 @@ advance_clock_cursor (void)
 static bool 
 cache_should_evict (struct cache_entry *entry)
 {
-  if (!lock_try_acquire (&entry->entry_lock))
+  if (lock_held_by_current_thread (&entry->entry_lock) 
+      || !lock_try_acquire (&entry->entry_lock))
     return false;
 
   if (!(entry->flags & USED))
@@ -237,10 +242,10 @@ cache_find_available (void)
 }
 
 static struct cache_entry * 
-cache_retain (enum block_type type, block_sector_t sector)
+cache_retain (block_sector_t sector)
 {
   lock_acquire (&cache_lock);
-  struct cache_entry *entry = cache_lookup (type, sector, true);
+  struct cache_entry *entry = cache_lookup (sector, true);
   if (!entry)
     {
       lock_release (&cache_lock);
@@ -276,7 +281,7 @@ cache_do_disk_read (struct cache_entry *entry)
 
   entry->flags |= READING_DISK;
   lock_release (&entry->entry_lock);
-  block_read (block_get_role (entry->type), entry->sector, entry->data);
+  block_read (fs_device, entry->sector, entry->data);
   lock_acquire (&entry->entry_lock);
   entry->flags ^= READING_DISK;
   cond_broadcast (&entry->finished, &entry->entry_lock);
@@ -289,14 +294,13 @@ cache_do_flush (struct cache_entry *entry)
 
   if ((entry->flags & USED) && (entry->flags & DIRTY))
     {
-      block_write (block_get_role (entry->type), entry->sector, entry->data);
+      block_write (fs_device, entry->sector, entry->data);
       entry->flags ^= DIRTY;
     }
 }
 
 static void 
-cache_do_evict (struct cache_entry *entry, 
-                enum block_type new_type, block_sector_t new_sector)
+cache_do_evict (struct cache_entry *entry, block_sector_t new_sector)
 {
   ASSERT (lock_held_by_current_thread (&cache_lock));
   ASSERT (lock_held_by_current_thread (&entry->entry_lock));
@@ -311,7 +315,6 @@ cache_do_evict (struct cache_entry *entry,
   else
     entry->flags |= USED;
 
-  entry->type = new_type;
   entry->sector = new_sector;
   entry->retain_cnt = entry->release_cnt = 0;
   hash_insert (&cache_hash, &entry->elem); 
