@@ -142,6 +142,7 @@ byte_to_sector (struct inode *inode, off_t pos, bool create)
                     INODE_NUM_DBL_INDIRECT, 2, create, disk);
     }
 
+  // FIXME: should this be here?
   printf ("block too big for disk: %u\n", block);
   cache_end (disk, false);
   return INODE_PTR_INVALID;
@@ -181,7 +182,6 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   struct inode *inode = inode_open (sector);
   if (inode->open_cnt > 1)
     {
-      printf ("create on open inode: %u\n", sector);
       return false;
     }
 
@@ -236,7 +236,6 @@ inode_open (block_sector_t sector)
   lock_init (&inode->dir_lock);
   lock_init (&inode->extend_lock);
   /* FIXME: readahead inode->sector? */
-  printf ("Returning inode: %p\n", inode);
   return inode;
 }
 
@@ -369,7 +368,6 @@ static off_t
 inode_do_write (struct inode *inode, const void *buffer_, off_t size,
                 off_t offset, bool extend)
 {
-//  printf ("inode_do_write: %u\n", inode->sector);
   if (!size)
     return 0;
 
@@ -479,7 +477,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 void
 inode_deny_write (struct inode *inode) 
 {
-  printf (" -- - -- - - - - - --inode deny write called on: %p, sector: %d\n", inode, inode->sector);
   inode->deny_write_cnt++;
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
 }
@@ -490,7 +487,6 @@ inode_deny_write (struct inode *inode)
 void
 inode_allow_write (struct inode *inode) 
 {
-  printf ("inode->deny_write_cnt: %d, inode->open_cnt: %d, inode: %p, sector: %d\n", inode->deny_write_cnt, inode->open_cnt, inode, inode->sector);
   ASSERT (inode->deny_write_cnt > 0);
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
   inode->deny_write_cnt--;

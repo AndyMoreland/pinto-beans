@@ -102,10 +102,6 @@ syscall_create_fd_for_file (char *name) {
         {
           fd->fd_id = syscall_get_new_fd_id ();
           fd->filedir = handle;
-          if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
-            printf ("Adding file [%s] with inode: %p, fd_id: [%d], handle: %p, file: [%p]\n", name, file_get_inode (fd->filedir->f), fd->fd_id, fd->filedir, fd->filedir->f);
-          else
-            printf ("Adding dir [%s] with inode: %p, fd_id: [%d], handle: %p\n", name, dir_get_inode (fd->filedir->d), fd->fd_id, fd->filedir);
           list_push_back (&t->file_descriptors, &fd->elem);
         }
     }
@@ -127,7 +123,6 @@ syscall_cleanup_process_data (void)
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
-  printf ("Done cleaning\n");
   lock_acquire (&fs_lock);
   file_close (t->executable);
   lock_release (&fs_lock);
@@ -352,10 +347,6 @@ syscall_do_close (int fd_id)
     {
       lock_acquire (&fs_lock);
       list_remove (&fd->elem);
-      if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
-        printf ("Attempting to remove fd_id: [%d], handle: [%p], file: [%p], inode: [%p]\n", fd_id, fd->filedir, fd->filedir->f, file_get_inode (fd->filedir->f));
-      else
-        printf ("Attempting to remove fd_id: [%d], handle: [%p]\n", fd_id, fd->filedir);
       if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
         file_close (fd->filedir->f);
       else

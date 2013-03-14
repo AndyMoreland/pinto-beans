@@ -25,7 +25,6 @@ file_open (struct inode *inode)
       file->inode = inode;
       file->pos = 0;
       file->deny_write = false;
-      printf ("[file.c] opening file: [%p], inode: [%p]\n", file, file->inode);
       return file;
     }
   else
@@ -50,7 +49,6 @@ file_close (struct file *file)
 {
   if (file != NULL)
     {
-      printf ("[file.c] file: [%p], inode: [%p], pos: [%d], deny_write: [%d]\n", file, file->inode, file->pos, file->deny_write);
       file_allow_write (file);
       inode_close (file->inode);
       free (file); 

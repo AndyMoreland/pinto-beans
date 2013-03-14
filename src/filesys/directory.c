@@ -145,7 +145,6 @@ dir_create (block_sector_t sector, size_t entry_cnt)
 bool
 dir_init (block_sector_t sector, struct inode *parent)
 {
-  printf ("initializing with sector %d\n", sector);
   struct inode *dir_inode = inode_open (sector);
   struct dir *new = dir_open (dir_inode);
 
@@ -195,7 +194,7 @@ dir_open_base_dir (const char *name)
   if ((name != NULL && name[0] == '/') || (thread_current ()->working_directory == NULL))
     return dir_open_root ();
 
-  return thread_current ()->working_directory;
+  return dir_reopen (thread_current ()->working_directory);
 }
 
 /* Opens and returns a new directory for the same inode as DIR.
@@ -243,7 +242,6 @@ lookup (const struct dir *dir, const char *name,
   for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
        ofs += sizeof e)
     {
-      // printf ("name: [%s], e.name: [%s]\n", name, e.name);
       if (e.in_use && !strcmp (name, e.name)) 
         {
           if (ep != NULL)
