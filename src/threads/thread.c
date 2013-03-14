@@ -12,6 +12,8 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "devices/timer.h"
+#include "filesys/directory.h"
+
 
 #ifdef USERPROG
 #include "userprog/process.h"
@@ -76,7 +78,8 @@ static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
 static struct thread *find_next_thread_to_run (void);
-static void init_thread (struct thread *, const char *name, int priority, int nice, fixed_point recent_cpu);
+static void init_thread (struct thread *, const char *name, int priority, int nice, 
+                         fixed_point recent_cpu, struct dir *working_dir);
 static bool is_thread (struct thread *) UNUSED;
 static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
@@ -117,7 +120,8 @@ thread_init (void)
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
-  init_thread (initial_thread, "main", PRI_DEFAULT, NICE_DEFAULT, RECENT_CPU_DEFAULT);
+  init_thread (initial_thread, "main", PRI_DEFAULT, NICE_DEFAULT, 
+               RECENT_CPU_DEFAULT, NULL);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
 }
@@ -228,7 +232,14 @@ thread_create (const char *name, int priority,
     return TID_ERROR;
 
   /* Initialize thread. */
-  init_thread (t, name, priority, thread_current ()->nice, thread_current ()->recent_cpu);
+  struct dir *wd;
+  if (thread_current ()->working_directory != NULL)
+    wd = dir_reopen (thread_current ()->working_directory);
+  else
+    wd = NULL;
+
+  init_thread (t, name, priority, thread_current ()->nice, thread_current ()->recent_cpu, wd);
+
   tid = t->tid = allocate_tid ();
 
   /* Stack frame for kernel_thread(). */
@@ -661,7 +672,7 @@ is_thread (struct thread *t)
 /* Does basic initialization of T as a blocked thread named
    NAME. */
 static void
-init_thread (struct thread *t, const char *name, int priority, int nice, fixed_point recent_cpu)
+init_thread (struct thread *t, const char *name, int priority, int nice, fixed_point recent_cpu, struct dir *working_directory)
 {
   enum intr_level old_level;
 
@@ -684,6 +695,7 @@ init_thread (struct thread *t, const char *name, int priority, int nice, fixed_p
 #ifdef USERPROG
   list_init (&t->file_descriptors);
   list_init (&t->child_processes);
+  t->working_directory = working_directory;
 #endif
 
   t->magic = THREAD_MAGIC;

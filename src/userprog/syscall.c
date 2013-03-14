@@ -7,11 +7,14 @@
 #include "userprog/pagedir.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "filesys/directory.h"
 #include "threads/malloc.h"
 #include "devices/input.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
 #include "devices/shutdown.h"
+#include "user/syscall.h"
+#include "filesys/inode.h"
 
 #define FIRST_FD_ID 2
 #define FILE_FAILURE -1
@@ -30,6 +33,11 @@ static void syscall_write (struct intr_frame *f);
 static void syscall_seek (struct intr_frame *f);
 static void syscall_tell (struct intr_frame *f);
 static void syscall_close (struct intr_frame *f);
+static void syscall_chdir (struct intr_frame *f);
+static void syscall_mkdir (struct intr_frame *f);
+static void syscall_readdir (struct intr_frame *f);
+static void syscall_isdir (struct intr_frame *f);
+static void syscall_inumber (struct intr_frame *f);
 static void syscall_do_close (int fd_id);
 
 static bool syscall_verify_pointer (void *vaddr);
@@ -37,7 +45,7 @@ static bool syscall_verify_pointer_offset (void *vaddr, size_t offset);
 
 struct file_descriptor {
   struct list_elem elem;
-  struct file *f;
+  struct filedir *filedir; 
   int fd_id;
 };
 
@@ -82,21 +90,25 @@ syscall_get_fd (int fd_id)
    NULL if open failed. */
 static struct file_descriptor *
 syscall_create_fd_for_file (char *name) {
-  struct file *file = filesys_open(name);
   struct file_descriptor *fd = NULL;
   struct thread *t = thread_current ();
 
-  if (file != NULL)
+  struct filedir *handle = filesys_open(name);
+      
+  if (handle != NULL)
     {
       fd = calloc (1, sizeof (struct file_descriptor));
       if (fd != NULL)
         {
           fd->fd_id = syscall_get_new_fd_id ();
-          fd->f = file;
+          fd->filedir = handle;
+          if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+            printf ("Adding file [%s] with inode: %p, fd_id: [%d], handle: %p, file: [%p]\n", name, file_get_inode (fd->filedir->f), fd->fd_id, fd->filedir, fd->filedir->f);
+          else
+            printf ("Adding dir [%s] with inode: %p, fd_id: [%d], handle: %p\n", name, dir_get_inode (fd->filedir->d), fd->fd_id, fd->filedir);
           list_push_back (&t->file_descriptors, &fd->elem);
         }
     }
-
   return fd;
 }
 
@@ -115,7 +127,7 @@ syscall_cleanup_process_data (void)
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
-
+  printf ("Done cleaning\n");
   lock_acquire (&fs_lock);
   file_close (t->executable);
   lock_release (&fs_lock);
@@ -258,6 +270,27 @@ syscall_handler (struct intr_frame *f)
     case SYS_CLOSE:
       syscall_close (f);
       break;
+
+    case SYS_CHDIR:
+      syscall_chdir (f);
+      break;
+
+    case SYS_MKDIR:
+      syscall_mkdir (f);
+      break;
+
+    case SYS_READDIR:
+      syscall_readdir (f);
+      break;
+
+    case SYS_ISDIR:
+      syscall_isdir (f);
+      break;
+
+    case SYS_INUMBER:
+      syscall_inumber (f);
+      break;
+
     default:
       thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
       break;
@@ -319,7 +352,15 @@ syscall_do_close (int fd_id)
     {
       lock_acquire (&fs_lock);
       list_remove (&fd->elem);
-      file_close (fd->f);
+      if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+        printf ("Attempting to remove fd_id: [%d], handle: [%p], file: [%p], inode: [%p]\n", fd_id, fd->filedir, fd->filedir->f, file_get_inode (fd->filedir->f));
+      else
+        printf ("Attempting to remove fd_id: [%d], handle: [%p]\n", fd_id, fd->filedir);
+      if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+        file_close (fd->filedir->f);
+      else
+        dir_close (fd->filedir->d);
+      free (fd->filedir);
       free (fd);
       lock_release (&fs_lock);
     }
@@ -363,8 +404,8 @@ syscall_filesize (struct intr_frame *f)
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
   lock_acquire (&fs_lock);
-  if (fd != NULL)
-    f->eax = file_length (fd->f);
+  if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+    f->eax = file_length (fd->filedir->f);
   else
     f->eax = FILE_FAILURE;
   lock_release (&fs_lock);
@@ -393,8 +434,8 @@ syscall_write (struct intr_frame *f)
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
       lock_acquire (&fs_lock);
-      if (fd != NULL)
-        f->eax = file_write (fd->f, *buffer, *size);
+      if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+        f->eax = file_write (fd->filedir->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
       lock_release (&fs_lock);
@@ -428,8 +469,8 @@ syscall_read (struct intr_frame *f)
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
       lock_acquire (&fs_lock);
-      if (fd != NULL)
-        f->eax = file_read (fd->f, *buffer, *size);
+      if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+        f->eax = file_read (fd->filedir->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
       lock_release (&fs_lock);
@@ -449,8 +490,8 @@ syscall_seek (struct intr_frame *f)
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
   lock_acquire (&fs_lock);
-  if (fd != NULL)
-    file_seek (fd->f, *position);
+  if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+    file_seek (fd->filedir->f, *position);
   lock_release (&fs_lock);
 }
 
@@ -465,8 +506,8 @@ syscall_tell (struct intr_frame *f)
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
   
   lock_acquire (&fs_lock);
-  if (fd != NULL)
-    f->eax = file_tell (fd->f);
+  if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+    f->eax = file_tell (fd->filedir->f);
   else
     f->eax = FILE_FAILURE;
 
@@ -513,3 +554,83 @@ syscall_wait (struct intr_frame *f)
   f->eax = process_wait (*pid);
 }
 
+static void
+syscall_chdir (struct intr_frame *f)
+{
+  char **dir;
+  struct thread *t = thread_current ();
+  if (!syscall_pointer_to_arg (f, 1, (void **) &dir)
+      || !syscall_verify_string (*dir))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  lock_acquire (&fs_lock);
+  struct dir *new_dir = filesys_open_dir (*dir);
+  if (new_dir)
+    {
+      if (t->working_directory != NULL)
+        dir_close (t->working_directory);
+      t->working_directory = new_dir;
+      f->eax = true;
+    }
+  else
+    f->eax = false;
+  lock_release (&fs_lock);
+}
+
+static void
+syscall_mkdir (struct intr_frame *f)
+{
+  char **dir;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &dir)
+      || !syscall_verify_string (*dir))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+  
+  lock_acquire (&fs_lock);
+  f->eax = filesys_mkdir (*dir);
+  lock_release (&fs_lock);
+}
+
+static void
+syscall_readdir (struct intr_frame *f)
+{
+  int *fd;
+  char **name;
+
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd)
+      || !syscall_pointer_to_arg (f, 2, (void **) &name)
+      || !syscall_verify_pointer_offset (*name, READDIR_MAX_LEN + 1))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+}
+
+static void
+syscall_isdir (struct intr_frame *f)
+{
+  int *fd_id;
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  lock_acquire (&fs_lock);
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);  
+  lock_release (&fs_lock);
+  f->eax = fd->filedir->mode == FILE_DESCRIPTOR_DIR;
+}
+
+static void
+syscall_inumber (struct intr_frame *f)
+{
+  int *fd_id;
+  
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
+    thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  lock_acquire (&fs_lock);
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);  
+  
+  if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
+    f->eax = inode_get_inumber (file_get_inode (fd->filedir->f));
+  else
+    f->eax = inode_get_inumber (dir_get_inode (fd->filedir->d));
+  lock_release (&fs_lock);
+}

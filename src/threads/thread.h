@@ -124,6 +124,9 @@ struct thread
 
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
+
+    /* Used by userprog/syscall.c and filesys/directory.c */
+    struct dir *working_directory;
     
     /* Used by userprog/process.c */
     struct file *executable;            /* Pointer to file that thread is running. */

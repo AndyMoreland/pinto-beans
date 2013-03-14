@@ -13,7 +13,7 @@
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
 
-#define INODE_NUM_DIRECT 124
+#define INODE_NUM_DIRECT 123
 #define INODE_NUM_INDIRECT 1
 #define INODE_NUM_DBL_INDIRECT 1
 
@@ -34,6 +34,7 @@ struct inode_disk
         block_sector_t indirect[INODE_NUM_INDIRECT];
         block_sector_t dbl_indirect[INODE_NUM_DBL_INDIRECT];
       };
+    bool is_dir;                      /* True if inode represents a directory. */
     uint32_t unused[0];               /* Not used. */
   };
 
@@ -59,6 +60,8 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
+    struct lock dir_lock;               /* If this inode represents a directory
+                                           then this prevents concurent access. */
     struct lock extend_lock;
   };
 
@@ -165,7 +168,7 @@ inode_do_write (struct inode *inode, const void *buffer_, off_t size,
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create (block_sector_t sector, off_t length)
+inode_create (block_sector_t sector, off_t length, bool is_dir)
 {
   bool success = false;
 
@@ -187,6 +190,7 @@ inode_create (block_sector_t sector, off_t length)
 
   disk->length = 0;
   disk->magic = INODE_MAGIC;
+  disk->is_dir = is_dir;
   inode->sector = sector;
   cache_end (disk, true);
 
@@ -229,8 +233,10 @@ inode_open (block_sector_t sector)
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  lock_init (&inode->dir_lock);
   lock_init (&inode->extend_lock);
   /* FIXME: readahead inode->sector? */
+  printf ("Returning inode: %p\n", inode);
   return inode;
 }
 
@@ -473,6 +479,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 void
 inode_deny_write (struct inode *inode) 
 {
+  printf (" -- - -- - - - - - --inode deny write called on: %p, sector: %d\n", inode, inode->sector);
   inode->deny_write_cnt++;
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
 }
@@ -483,6 +490,7 @@ inode_deny_write (struct inode *inode)
 void
 inode_allow_write (struct inode *inode) 
 {
+  printf ("inode->deny_write_cnt: %d, inode->open_cnt: %d, inode: %p, sector: %d\n", inode->deny_write_cnt, inode->open_cnt, inode, inode->sector);
   ASSERT (inode->deny_write_cnt > 0);
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
   inode->deny_write_cnt--;
@@ -497,3 +505,15 @@ inode_length (const struct inode *inode)
   cache_end (block, false);
   return len;
 }
+
+/* Returns `true` if INODE represents a directory, `false` otherwise */
+bool
+inode_is_dir (const struct inode *inode)
+{
+  struct inode_disk *block = cache_begin (inode->sector);
+  bool is_dir = block->is_dir;
+  cache_end (block, false);
+  return is_dir;
+}
+
+

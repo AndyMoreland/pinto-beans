@@ -333,6 +333,12 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  /* Clean up working directory */
+  lock_acquire (&fs_lock);
+  if (cur->working_directory != NULL)
+    dir_close (cur->working_directory);
+  lock_release (&fs_lock);
+
   /* Close open file descriptors */
   syscall_cleanup_process_data ();
   
@@ -479,7 +485,7 @@ load (const char *file_name, int argc, char **argv,
 
   /* Open executable file. */
   lock_acquire (&fs_lock);
-  file = filesys_open (file_name);
+  file = filesys_open_file (file_name);
   lock_release (&fs_lock);
 
   if (file == NULL)

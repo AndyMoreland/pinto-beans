@@ -5,6 +5,9 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 
+//FIXME: remove this
+#include "threads/thread.h"
+
 static struct file *free_map_file;   /* Free map file. */
 static struct bitmap *free_map;      /* Free map, one bit per sector. */
 
@@ -53,7 +56,9 @@ free_map_release (block_sector_t sector, size_t cnt)
 void
 free_map_open (void) 
 {
+  lock_acquire (&fs_lock);
   free_map_file = file_open (inode_open (FREE_MAP_SECTOR));
+  lock_release (&fs_lock);
   if (free_map_file == NULL)
     PANIC ("can't open free map");
   if (!bitmap_read (free_map, free_map_file))
@@ -64,7 +69,9 @@ free_map_open (void)
 void
 free_map_close (void) 
 {
+  lock_acquire (&fs_lock);
   file_close (free_map_file);
+  lock_release (&fs_lock);
 }
 
 /* Creates a new free map file on disk and writes the free map to
@@ -73,11 +80,13 @@ void
 free_map_create (void) 
 {
   /* Create inode. */
-  if (!inode_create (FREE_MAP_SECTOR, bitmap_file_size (free_map)))
+  if (!inode_create (FREE_MAP_SECTOR, bitmap_file_size (free_map), false))
     PANIC ("free map creation failed");
 
   /* Write bitmap to file. */
+  lock_acquire (&fs_lock);
   free_map_file = file_open (inode_open (FREE_MAP_SECTOR));
+  lock_release (&fs_lock);
   if (free_map_file == NULL)
     PANIC ("can't open free map");
   if (!bitmap_write (free_map, free_map_file))
