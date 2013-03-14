@@ -36,7 +36,7 @@ dir_split_filename (const char *path)
   ASSERT (path != NULL);
 
   char *cursor;
-  // FIXME: for some reason path_cpy is one byte too low. not sure why.
+  // FIXME: for some reason path_cpy is one byte too low. not sure why. intuitively this should be >=
   for (cursor = &path[strlen (path)]; cursor > path; cursor--)
       if (*cursor == '/')
           break;
@@ -58,6 +58,9 @@ dir_split_filename (const char *path)
 struct inode *
 dir_resolve_path (const char *path, struct dir *base)
 {
+  if (strlen (path) == 0)
+    return NULL;
+
   struct dir *containing_dir = dir_lookup_containing_dir (path, base);
 
   if (containing_dir == NULL) {
@@ -334,6 +337,9 @@ dir_can_remove_dir (struct inode *dir_inode)
 {
   //printf ("The open count for [%p] is: %d\n", dir_inode, inode_get_open_count (dir_inode));
   if (inode_get_open_count (dir_inode) > 1)
+    return false;
+
+  if (inode_get_inumber (dir_inode) == ROOT_DIR_SECTOR)
     return false;
 
   char buffer[NAME_MAX + 1];

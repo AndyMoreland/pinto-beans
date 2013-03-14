@@ -130,6 +130,19 @@ filesys_open_file (const char *path)
     return file_open (inode);
 }
 
+static bool
+filesys_path_all_slashes (const char *path)
+{
+  if (strlen (path) == 0)
+    return false;
+
+  const char *cursor;
+  for (cursor = path; *cursor != '\0'; cursor++)
+    if (*cursor != '/')
+      return false;
+
+  return true;
+}
 
 /* Opens the dir with the given NAME.
    Returns the new dir if successful or a null pointer
@@ -142,8 +155,7 @@ filesys_open_dir (const char *path)
   struct dir *dir = dir_open_base_dir (path);
   struct inode *inode = NULL;
 
-  // FIXME: make this more robust.
-  if (!strcmp (path, "/"))
+  if (filesys_path_all_slashes (path))
     path = "/.";
   
   if (dir != NULL)
@@ -172,10 +184,6 @@ bool
 filesys_remove (const char *path) 
 {
   char *filename = dir_split_filename (path);
-
-  // FIXME: catch multiple //// in a row
-  if (!strcmp (path, "/"))
-    return false;
   
   if (filename == NULL)
     return false;
@@ -210,8 +218,10 @@ filesys_mkdir (const char *path)
     return false;
 
   bool success = true;
+  block_sector_t inode_sector = 0;
 
   struct dir *dir = dir_open_base_dir (path);
+
   if (dir != NULL)
     {
       struct dir *containing_dir = dir_lookup_containing_dir (path, dir);
@@ -220,8 +230,6 @@ filesys_mkdir (const char *path)
           dir_close (dir);
           return false;
         }
-      block_sector_t inode_sector = 0;
-      // FIXME: free this sector if we fail?
       success = success && free_map_allocate (1, &inode_sector);
       success = success && dir_create (inode_sector, DEFAULT_DIR_SIZE);
       success = success && dir_init (inode_sector, dir_get_inode (containing_dir));
@@ -230,6 +238,9 @@ filesys_mkdir (const char *path)
       dir_close (containing_dir);
       dir_close (dir);
     }
+
+  if (!success && inode_sector != 0) 
+    free_map_release (inode_sector, 1);
   
   free (filename);
   return success;
