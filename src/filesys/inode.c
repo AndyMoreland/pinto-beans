@@ -62,6 +62,7 @@ struct inode
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
     struct lock dir_lock;               /* If this inode represents a directory
                                            then this prevents concurent access. */
+    struct lock metadata_lock;
     struct lock extend_lock;
   };
 
@@ -89,6 +90,7 @@ inode_indirect_lookup (off_t block, block_sector_t *ptrs, off_t count,
   if (!depth)
     {
       block_sector_t retval = inode_get_ptr (ptrs + block, create);
+      ASSERT (retval == ptrs[block]);
       cache_end (parent, create);
       return retval;
     }
@@ -105,7 +107,9 @@ inode_indirect_lookup (off_t block, block_sector_t *ptrs, off_t count,
       sector = *ptr;
     }
   else
-    sector = ptrs[child_index];
+    {
+      sector = ptrs[child_index];
+    }
   cache_end (parent, created);
   if (!sector_is_valid (sector))
     return sector;
@@ -201,6 +205,33 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   return success;
 }
 
+static bool 
+inode_sanitize (struct inode *inode)
+{
+  off_t len = inode_length (inode);
+  off_t blocks = bytes_to_sectors (len);
+  off_t i;
+  bool fail = false;
+  for (i = 0; !fail && i < blocks; i++)
+    {
+      if (byte_to_sector (inode, i * BLOCK_SECTOR_SIZE, false) > 4096)
+        fail = true;
+    }
+
+  if (fail)
+    {
+      printf (">> INVALID INODE STATE: (len=%u)\n", len);
+      for (i = 0; !fail && i < blocks; i++)
+        {
+          off_t sec = byte_to_sector (inode, i * BLOCK_SECTOR_SIZE, false);
+          printf ("%d: %u\n", i, sec);
+        }
+      PANIC ("bad things");
+    }
+
+  return !fail;
+}
+
 /* Reads an inode from SECTOR
    and returns a `struct inode' that contains it.
    Returns a null pointer if memory allocation fails. */
@@ -236,6 +267,7 @@ inode_open (block_sector_t sector)
   inode->deny_write_cnt = 0;
   inode->removed = false;
   lock_init (&inode->dir_lock);
+  lock_init (&inode->metadata_lock);
   lock_init (&inode->extend_lock);
   /* FIXME: readahead inode->sector? */
   // printf ("!!opening [%p]\n", inode);
@@ -332,11 +364,10 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   while (size > 0) 
     {
       /* Disk sector to read, starting byte offset within sector. */
-      block_sector_t sector_idx = byte_to_sector (inode, offset, false);
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
       /* Bytes left in inode, bytes left in sector, lesser of the two. */
-      off_t inode_left = inode_length (inode) - offset;
+      int inode_left = (int) inode_length (inode) - offset;
       int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
       int min_left = inode_left < sector_left ? inode_left : sector_left;
 
@@ -344,6 +375,8 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       int chunk_size = size < min_left ? size : min_left;
       if (chunk_size <= 0)
         break;
+
+      block_sector_t sector_idx = byte_to_sector (inode, offset, false);
 
       if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
         {
@@ -420,14 +453,16 @@ inode_do_write (struct inode *inode, const void *buffer_, off_t size,
       offset += chunk_size;
       if (extend)
         {
+          lock_acquire (&inode->metadata_lock);
           struct inode_disk *disk = cache_begin (inode->sector);
           disk->length = offset;
           cache_end (disk, true);
+          lock_release (&inode->metadata_lock);
         }
           
       bytes_written += chunk_size;
     }
-
+  
   return bytes_written; 
 }
 
@@ -480,7 +515,9 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 void
 inode_deny_write (struct inode *inode) 
 {
+  lock_acquire (&inode->metadata_lock);
   inode->deny_write_cnt++;
+  lock_release (&inode->metadata_lock);
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
 }
 
@@ -492,16 +529,20 @@ inode_allow_write (struct inode *inode)
 {
   ASSERT (inode->deny_write_cnt > 0);
   ASSERT (inode->deny_write_cnt <= inode->open_cnt);
+  lock_acquire (&inode->metadata_lock);
   inode->deny_write_cnt--;
+  lock_release (&inode->metadata_lock);
 }
 
 /* Returns the length, in bytes, of INODE's data. */
 off_t
 inode_length (const struct inode *inode)
 {
+  lock_acquire (&inode->metadata_lock);
   struct inode_disk *block = cache_begin (inode->sector);
   off_t len = block->length;
   cache_end (block, false);
+  lock_release (&inode->metadata_lock);
   return len;
 }
 

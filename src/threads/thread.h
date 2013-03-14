@@ -141,13 +141,12 @@ struct thread
     unsigned magic;                     /* Detects stack overflow. */
   };
 
+struct lock fs_lock;
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
-/* Used by userprog/process.c and userprog/syscall.c */
-struct lock fs_lock;
 
 void thread_init (void);
 void thread_start (void);

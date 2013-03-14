@@ -123,9 +123,7 @@ syscall_cleanup_process_data (void)
       struct file_descriptor *fd = list_entry (e, struct file_descriptor, elem);
       syscall_do_close(fd->fd_id);
     }
-  lock_acquire (&fs_lock);
   file_close (t->executable);
-  lock_release (&fs_lock);
 }
 
 void
@@ -312,9 +310,7 @@ syscall_create (struct intr_frame *f)
       || !syscall_pointer_to_arg (f, 2, (void **) &initial_size))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
   
-  lock_acquire (&fs_lock);
   f->eax = filesys_create (*file, *initial_size);
-  lock_release (&fs_lock);
 }
 
 static void
@@ -327,10 +323,8 @@ syscall_open (struct intr_frame *f) {
       || !syscall_verify_string (*name))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
   
-  lock_acquire (&fs_lock);
   if (*name != NULL)
     fd = syscall_create_fd_for_file (*name);
-  lock_release (&fs_lock);
   
   if (fd != NULL)
     f->eax = fd->fd_id;
@@ -345,7 +339,6 @@ syscall_do_close (int fd_id)
   
   if (fd != NULL)
     {
-      lock_acquire (&fs_lock);
       list_remove (&fd->elem);
       if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
         file_close (fd->filedir->f);
@@ -353,7 +346,6 @@ syscall_do_close (int fd_id)
         dir_close (fd->filedir->d);
       free (fd->filedir);
       free (fd);
-      lock_release (&fs_lock);
     }
 }
 
@@ -377,11 +369,7 @@ syscall_remove (struct intr_frame *f)
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
   if (*name != NULL)
-    {
-      lock_acquire (&fs_lock);
-      f->eax = filesys_remove(*name);
-      lock_release (&fs_lock);
-    }
+    f->eax = filesys_remove(*name);
 }
 
 static void
@@ -394,12 +382,10 @@ syscall_filesize (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
-  lock_acquire (&fs_lock);
   if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
     f->eax = file_length (fd->filedir->f);
   else
     f->eax = FILE_FAILURE;
-  lock_release (&fs_lock);
 }
 
 static void
@@ -424,12 +410,10 @@ syscall_write (struct intr_frame *f)
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
-      lock_acquire (&fs_lock);
       if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
         f->eax = file_write (fd->filedir->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
-      lock_release (&fs_lock);
     }
 }
 
@@ -459,12 +443,10 @@ syscall_read (struct intr_frame *f)
     {
       struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
-      lock_acquire (&fs_lock);
       if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
         f->eax = file_read (fd->filedir->f, *buffer, *size);
       else
         f->eax = FILE_FAILURE;
-      lock_release (&fs_lock);
     }
 }
 
@@ -480,10 +462,8 @@ syscall_seek (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
 
-  lock_acquire (&fs_lock);
   if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
     file_seek (fd->filedir->f, *position);
-  lock_release (&fs_lock);
 }
 
 static void
@@ -496,14 +476,10 @@ syscall_tell (struct intr_frame *f)
 
   struct file_descriptor *fd = syscall_get_fd (*fd_id);
   
-  lock_acquire (&fs_lock);
   if (fd != NULL && fd->filedir->mode == FILE_DESCRIPTOR_FILE)
     f->eax = file_tell (fd->filedir->f);
   else
     f->eax = FILE_FAILURE;
-
-  lock_release (&fs_lock);
-
 }
 
 static void 

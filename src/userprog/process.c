@@ -474,9 +474,7 @@ load (const char *file_name, int argc, char **argv,
   process_activate ();
 
   /* Open executable file. */
-  lock_acquire (&fs_lock);
   file = filesys_open_file (file_name);
-  lock_release (&fs_lock);
 
   if (file == NULL)
       goto done; 
@@ -503,16 +501,12 @@ load (const char *file_name, int argc, char **argv,
     {
       struct Elf32_Phdr phdr;
 
-      lock_acquire (&fs_lock);
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
-      lock_release (&fs_lock);
 
-      lock_acquire (&fs_lock);
       if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
         goto done;
-      lock_release (&fs_lock);
 
       file_ofs += sizeof phdr;
       switch (phdr.p_type) 
