@@ -217,6 +217,7 @@ inode_open (block_sector_t sector)
       inode = list_entry (e, struct inode, elem);
       if (inode->sector == sector) 
         {
+          // printf ("Re-opening [%p]\n", inode);
           inode_reopen (inode);
           // printf ("!!opening [%p]\n", inode);
           return inode; 

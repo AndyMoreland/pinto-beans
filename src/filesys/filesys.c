@@ -226,7 +226,9 @@ filesys_mkdir (const char *path)
       success = success && dir_create (inode_sector, DEFAULT_DIR_SIZE);
       success = success && dir_init (inode_sector, dir_get_inode (containing_dir));
       success = success && dir_add (containing_dir, filename, inode_sector);
+      // printf ("Attempting to add sector [%d] to [%p] and success: [%d]\n", inode_sector, dir_get_inode (containing_dir), success);
       dir_close (containing_dir);
+      dir_close (dir);
     }
   
   free (filename);

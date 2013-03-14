@@ -25,6 +25,8 @@ struct dir_entry
   };
 
 
+static bool dir_can_remove_dir (struct inode *dir_inode);
+
 /* Returns pointer to heap allocated filename.
    Returns NULL if memory allocation fails.
    Caller must free. */
@@ -64,9 +66,13 @@ dir_resolve_path (const char *path, struct dir *base)
   
   char *filename = dir_split_filename (path);
   if (filename == NULL)
-    return NULL;
+    {
+      dir_close (containing_dir);
+      return NULL;
+    }
   struct inode *result;
   dir_lookup (containing_dir, filename, &result);
+  dir_close (containing_dir);
   free (filename);
   
   return result;
@@ -102,7 +108,7 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
       if (dir_lookup (current_dir, word, &current_inode))
         {
           if (current_dir != base)
-                dir_close (current_dir);
+            dir_close (current_dir);
 
           if (inode_is_dir (current_inode))
             {
@@ -119,6 +125,8 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
         }
       else 
         {
+          if (current_dir != base)
+            dir_close (current_dir);
           current_dir = NULL;
           break;
         }
@@ -321,10 +329,10 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   return success;
 }
 
-bool
+static bool
 dir_can_remove_dir (struct inode *dir_inode)
 {
-  // printf ("The open count for [%p] is: %d\n", dir_inode, inode_get_open_count (dir_inode));
+  //printf ("The open count for [%p] is: %d\n", dir_inode, inode_get_open_count (dir_inode));
   if (inode_get_open_count (dir_inode) > 1)
     return false;
 
@@ -337,7 +345,7 @@ dir_can_remove_dir (struct inode *dir_inode)
 
   dir_close (dir);
   
-  // printf ("Count is: %d\n", count);
+  //printf ("Count is: %d\n", count);
 
   return count == 0;
 }
@@ -348,7 +356,7 @@ dir_can_remove_dir (struct inode *dir_inode)
 bool
 dir_remove (struct dir *dir, const char *name) 
 {
-  // printf ("Removing [%s] from [%p]\n", name, dir);
+  //printf// ("Removing [%s] from [%p]\n", name, dir);
   struct dir_entry e;
   struct inode *inode = NULL;
   bool success = false;
@@ -381,7 +389,7 @@ dir_remove (struct dir *dir, const char *name)
   success = true;
   
  done:
-  // printf ("success: %d\n", success);
+  //printf ("success: %d\n", success);
   inode_close (inode);
   return success;
 }
