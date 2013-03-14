@@ -141,6 +141,10 @@ filesys_open_dir (const char *path)
 {
   struct dir *dir = dir_open_base_dir (path);
   struct inode *inode = NULL;
+
+  // FIXME: make this more robust.
+  if (!strcmp (path, "/"))
+    path = "/.";
   
   if (dir != NULL)
     inode = dir_resolve_path (path, dir);
@@ -163,12 +167,37 @@ filesys_open_dir (const char *path)
    Returns true if successful, false on failure.
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
+//FIXME my freeing here is terrible.
 bool
 filesys_remove (const char *path) 
 {
+  char *filename = dir_split_filename (path);
+
+  // FIXME: catch multiple //// in a row
+  if (!strcmp (path, "/"))
+    return false;
+  
+  if (filename == NULL)
+    return false;
+
   struct dir *dir = dir_open_base_dir (path);
-  bool success = dir != NULL && dir_remove (dir, path);
+  if (dir == NULL) {
+    free(filename);
+    return false;
+  }
+
+  struct dir *containing_dir = dir_lookup_containing_dir (path, dir);
+  
+  if (containing_dir == NULL) {
+    free (filename);
+    dir_close (dir);
+    return false;
+  }
+
+  bool success = dir_remove (containing_dir, filename);
   dir_close (dir); 
+  dir_close (containing_dir);
+  free (filename);
 
   return success;
 }

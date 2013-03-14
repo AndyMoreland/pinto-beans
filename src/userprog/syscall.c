@@ -585,13 +585,20 @@ syscall_mkdir (struct intr_frame *f)
 static void
 syscall_readdir (struct intr_frame *f)
 {
-  int *fd;
+  int *fd_id;
   char **name;
 
-  if (!syscall_pointer_to_arg (f, 1, (void **) &fd)
+  if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id)
       || !syscall_pointer_to_arg (f, 2, (void **) &name)
       || !syscall_verify_pointer_offset (*name, READDIR_MAX_LEN + 1))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
+
+  struct file_descriptor *fd = syscall_get_fd (*fd_id);  
+
+  if (fd->filedir->mode == FILE_DESCRIPTOR_DIR)
+    f->eax = dir_readdir (fd->filedir->d, *name);
+  else
+    f->eax = FILE_FAILURE;
 
 }
 

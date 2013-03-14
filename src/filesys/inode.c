@@ -218,6 +218,7 @@ inode_open (block_sector_t sector)
       if (inode->sector == sector) 
         {
           inode_reopen (inode);
+          // printf ("!!opening [%p]\n", inode);
           return inode; 
         }
     }
@@ -236,6 +237,7 @@ inode_open (block_sector_t sector)
   lock_init (&inode->dir_lock);
   lock_init (&inode->extend_lock);
   /* FIXME: readahead inode->sector? */
+  // printf ("!!opening [%p]\n", inode);
   return inode;
 }
 
@@ -510,6 +512,14 @@ inode_is_dir (const struct inode *inode)
   bool is_dir = block->is_dir;
   cache_end (block, false);
   return is_dir;
+}
+
+/* Returns the `open_count` of an inode. */
+
+int
+inode_get_open_count (const struct inode *inode)
+{
+  return inode->open_cnt;
 }
 
 

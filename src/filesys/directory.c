@@ -321,12 +321,34 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   return success;
 }
 
+bool
+dir_can_remove_dir (struct inode *dir_inode)
+{
+  // printf ("The open count for [%p] is: %d\n", dir_inode, inode_get_open_count (dir_inode));
+  if (inode_get_open_count (dir_inode) > 1)
+    return false;
+
+  char buffer[NAME_MAX + 1];
+  
+  struct dir *dir = dir_open (inode_reopen (dir_inode));
+  int count = 0;
+  while (dir_readdir (dir, buffer))
+    count++;
+
+  dir_close (dir);
+  
+  // printf ("Count is: %d\n", count);
+
+  return count == 0;
+}
+
 /* Removes any entry for NAME in DIR.
    Returns true if successful, false on failure,
    which occurs only if there is no file with the given NAME. */
 bool
 dir_remove (struct dir *dir, const char *name) 
 {
+  // printf ("Removing [%s] from [%p]\n", name, dir);
   struct dir_entry e;
   struct inode *inode = NULL;
   bool success = false;
@@ -344,16 +366,22 @@ dir_remove (struct dir *dir, const char *name)
   if (inode == NULL)
     goto done;
 
+  if (inode_is_dir (inode) && !dir_can_remove_dir (inode))
+    goto done;
+    
+
   /* Erase directory entry. */
   e.in_use = false;
+  // printf ("dir->inode: [%p], ofs: [%d]\n", dir->inode, ofs);
   if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
     goto done;
-
+  
   /* Remove inode. */
   inode_remove (inode);
   success = true;
-
+  
  done:
+  // printf ("success: %d\n", success);
   inode_close (inode);
   return success;
 }
@@ -369,7 +397,7 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
   while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) 
     {
       dir->pos += sizeof e;
-      if (e.in_use)
+      if (e.in_use && strcmp (e.name, "..") && strcmp (e.name, "."))
         {
           strlcpy (name, e.name, NAME_MAX + 1);
           return true;
