@@ -3,6 +3,9 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
+// FIXME: REMOVE
+#include "stdio.h"
+
 /* An open file. */
 struct file 
   {
