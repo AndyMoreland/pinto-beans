@@ -73,11 +73,10 @@ sector_is_valid (block_sector_t block)
   return block != INODE_PTR_INVALID;
 }
 
+/* Set *BLOCK_PTR to a valid sector number (allocating one if CREATE is true) */
 static block_sector_t 
 inode_get_ptr (block_sector_t *block_ptr, bool create)
 {
-  // FIXME: deal with this assert
-//  ASSERT (create == !sector_is_valid(*block_ptr));
   if (create)
     free_map_allocate (1, block_ptr);
   return *block_ptr;

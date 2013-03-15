@@ -84,6 +84,9 @@ struct filedir *
 filesys_open (const char *name)
 {
   struct filedir *fd = malloc (sizeof (struct filedir));
+  if (fd == NULL)
+    return NULL;
+
   fd->f = filesys_open_file (name);
 
   if (fd->f != NULL)
