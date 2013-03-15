@@ -530,7 +530,6 @@ syscall_chdir (struct intr_frame *f)
       || !syscall_verify_string (*dir))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-  lock_acquire (&fs_lock);
   struct dir *new_dir = filesys_open_dir (*dir);
   if (new_dir)
     {
@@ -541,7 +540,6 @@ syscall_chdir (struct intr_frame *f)
     }
   else
     f->eax = false;
-  lock_release (&fs_lock);
 }
 
 static void
@@ -553,9 +551,7 @@ syscall_mkdir (struct intr_frame *f)
       || !syscall_verify_string (*dir))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
   
-  lock_acquire (&fs_lock);
   f->eax = filesys_mkdir (*dir);
-  lock_release (&fs_lock);
 }
 
 static void
@@ -585,9 +581,7 @@ syscall_isdir (struct intr_frame *f)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-  lock_acquire (&fs_lock);
   struct file_descriptor *fd = syscall_get_fd (*fd_id);  
-  lock_release (&fs_lock);
   f->eax = fd->filedir->mode == FILE_DESCRIPTOR_DIR;
 }
 
@@ -599,12 +593,10 @@ syscall_inumber (struct intr_frame *f)
   if (!syscall_pointer_to_arg (f, 1, (void **) &fd_id))
     thread_exit_with_message (SYSCALL_ERROR_EXIT_CODE);
 
-  lock_acquire (&fs_lock);
   struct file_descriptor *fd = syscall_get_fd (*fd_id);  
   
   if (fd->filedir->mode == FILE_DESCRIPTOR_FILE)
     f->eax = inode_get_inumber (file_get_inode (fd->filedir->f));
   else
     f->eax = inode_get_inumber (dir_get_inode (fd->filedir->d));
-  lock_release (&fs_lock);
 }

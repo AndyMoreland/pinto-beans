@@ -69,9 +69,6 @@ static fixed_point load_average;
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
-/* A coarse lock that protects the FS from concurrent access. */
-extern struct lock fs_lock;
-
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -116,7 +113,6 @@ thread_init (void)
     list_init (&ready_lists[i]);
   list_init (&all_list);
   load_average = fixed_point_create (LOAD_AVERAGE_DEFAULT);
-  lock_init (&fs_lock);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();

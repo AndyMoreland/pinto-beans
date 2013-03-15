@@ -324,10 +324,8 @@ process_exit (void)
   uint32_t *pd;
 
   /* Clean up working directory */
-  lock_acquire (&fs_lock);
   if (cur->working_directory != NULL)
     dir_close (cur->working_directory);
-  lock_release (&fs_lock);
 
   /* Close open file descriptors */
   syscall_cleanup_process_data ();
@@ -481,7 +479,6 @@ load (const char *file_name, int argc, char **argv,
 
   t->executable = file;
   /* Read and verify executable header. */
-  lock_acquire (&fs_lock);
   file_deny_write (file);
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -493,7 +490,6 @@ load (const char *file_name, int argc, char **argv,
     {
       goto done; 
     }
-  lock_release (&fs_lock);
   
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
@@ -565,9 +561,6 @@ load (const char *file_name, int argc, char **argv,
   success = true;
 
  done:
-  /* We arrive here whether the load is successful or not. */
-  if (lock_held_by_current_thread (&fs_lock))
-    lock_release (&fs_lock);
 
   return success;
 }
