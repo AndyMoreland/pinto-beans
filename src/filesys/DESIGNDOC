@@ -322,7 +322,11 @@ enum cache_flags
     ACCESSED = 0x2,
     DIRTY = 0x4,
     INIT = 0x8,
+<<<<<<< Updated upstream
     READING_DISK = 0x10,
+=======
+    READING_DISK = 0xF,
+>>>>>>> Stashed changes
   }; 
 
 This enum is used in `struct cache_entry`s in order to distinguish
@@ -446,8 +450,14 @@ are locked on read/write to prevent nonatomic write artifacts.)
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
 
-A freshly evicted block is in three states:
-1. chosen for eviction: this entry is first 
+When a block is evicted it is put into the  "WRITING_DISK" state.
+If a request comes in for the block while it is in "WRITING_DISK" then
+the requesting thread will be blocked on the "finished" cond variable.
+
+Once the write finishes, the requesting thread will wake up and acquire
+the lock (eventually). It will then check that the sector number of the
+cache entry it just acquired is correct. If this is not the case then
+it will trigger the standard cache-miss behavior and cache in the sector.
 
 ---- RATIONALE ----
 
