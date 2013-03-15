@@ -124,6 +124,9 @@ struct thread
 
     /* Used by userprog/syscall.c */
     struct list file_descriptors;       /* List of files opened by thread. */
+
+    /* Used by userprog/syscall.c and filesys/directory.c */
+    struct dir *working_directory;
     
     /* Used by userprog/process.c */
     struct file *executable;            /* Pointer to file that thread is running. */
@@ -142,9 +145,6 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
-/* Used by userprog/process.c and userprog/syscall.c */
-struct lock fs_lock;
 
 void thread_init (void);
 void thread_start (void);

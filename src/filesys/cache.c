@@ -80,8 +80,8 @@ cache_read (block_sector_t sector, void *dst)
     }
   else
     {
-      lock_acquire (&entry->entry_lock);
       memcpy (dst, entry->data, BLOCK_SECTOR_SIZE);
+      lock_acquire (&entry->entry_lock);
       ++entry->release_cnt;
       lock_release (&entry->entry_lock);
     }
@@ -98,8 +98,8 @@ cache_write (block_sector_t sector, const void *src)
     }
   else
     {
-      lock_acquire (&entry->entry_lock);
       memcpy (entry->data, src, BLOCK_SECTOR_SIZE);
+      lock_acquire (&entry->entry_lock);
       ++entry->release_cnt;
       entry->flags |= DIRTY;
       lock_release (&entry->entry_lock);
@@ -115,12 +115,7 @@ void *
 cache_begin (block_sector_t sector)
 {
   struct cache_entry *entry = cache_retain (sector);
-  if (entry)
-    {
-      lock_acquire (&entry->entry_lock);
-      return entry->data;
-    }
-  return entry;
+  return entry? entry->data : NULL;
 }
 
 #define cache_entry(dat) ((struct cache_entry *) \
@@ -130,6 +125,7 @@ void
 cache_end (void *cache_block, bool dirty)
 {
   struct cache_entry *entry = cache_entry (cache_block);
+  lock_acquire (&entry->entry_lock);
   ++entry->release_cnt;
   if (dirty)
     entry->flags |= DIRTY;

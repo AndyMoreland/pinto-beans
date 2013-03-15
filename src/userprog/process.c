@@ -298,10 +298,7 @@ start_process (void *aux)
    exception), returns -1.  If TID is invalid or if it was not a
    child of the calling process, or if process_wait() has already
    been successfully called for the given TID, returns -1
-   immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+   immediately, without waiting. */
 int
 process_wait (tid_t child_tid)
 {
@@ -315,14 +312,7 @@ process_wait (tid_t child_tid)
     pdata_release (child);
     return retval;
   }
-      
-  int counter = 0;
-  while (counter < 100000000) 
-    { 
-      counter++;
-      if (counter % 1000 == 0)
-        counter += 2;
-    }
+
   return -1;
 }
 
@@ -332,6 +322,10 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  /* Clean up working directory */
+  if (cur->working_directory != NULL)
+    dir_close (cur->working_directory);
 
   /* Close open file descriptors */
   syscall_cleanup_process_data ();
@@ -478,16 +472,13 @@ load (const char *file_name, int argc, char **argv,
   process_activate ();
 
   /* Open executable file. */
-  lock_acquire (&fs_lock);
-  file = filesys_open (file_name);
-  lock_release (&fs_lock);
+  file = filesys_open_file (file_name);
 
   if (file == NULL)
       goto done; 
 
   t->executable = file;
   /* Read and verify executable header. */
-  lock_acquire (&fs_lock);
   file_deny_write (file);
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -499,7 +490,6 @@ load (const char *file_name, int argc, char **argv,
     {
       goto done; 
     }
-  lock_release (&fs_lock);
   
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
@@ -507,16 +497,12 @@ load (const char *file_name, int argc, char **argv,
     {
       struct Elf32_Phdr phdr;
 
-      lock_acquire (&fs_lock);
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
-      lock_release (&fs_lock);
 
-      lock_acquire (&fs_lock);
       if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
         goto done;
-      lock_release (&fs_lock);
 
       file_ofs += sizeof phdr;
       switch (phdr.p_type) 
@@ -575,9 +561,6 @@ load (const char *file_name, int argc, char **argv,
   success = true;
 
  done:
-  /* We arrive here whether the load is successful or not. */
-  if (lock_held_by_current_thread (&fs_lock))
-    lock_release (&fs_lock);
 
   return success;
 }
