@@ -27,6 +27,24 @@ struct dir_entry
 
 static bool dir_can_remove_dir (struct inode *dir_inode);
 
+static void
+dir_lock_dir (struct dir *dir)
+{
+  ASSERT (dir != NULL);
+  ASSERT (dir->inode != NULL);
+  printf ("About to acquire lock!\n");
+  inode_acquire_dir_lock (dir->inode);
+  printf ("Acquired lock!\n");
+}
+
+
+static void
+dir_unlock_dir (struct dir *dir)
+{
+  ASSERT (dir->inode != NULL);
+  // inode_release_dir_lock (dir->inode);
+}
+
 /* Returns pointer to heap allocated filename.
    Returns NULL if memory allocation fails.
    Caller must free. */
@@ -66,17 +84,21 @@ dir_resolve_path (const char *path, struct dir *base)
   if (containing_dir == NULL) {
     return NULL;
   }
-  
+
+  dir_lock_dir (containing_dir);
+
   char *filename = dir_split_filename (path);
   if (filename == NULL)
     {
       dir_close (containing_dir);
+      dir_unlock_dir (containing_dir);
       return NULL;
     }
   struct inode *result;
   dir_lookup (containing_dir, filename, &result);
   dir_close (containing_dir);
   free (filename);
+  dir_unlock_dir (containing_dir);
   
   return result;
 }
@@ -85,7 +107,8 @@ dir_resolve_path (const char *path, struct dir *base)
    return a `struct dir *` pointing to the last dir in the pathname. 
    Caller is responsible for closing BASE and returned dir.
    May return BASE reopened.
-   */
+   Returns unlocked dir.
+*/
 struct dir *
 dir_lookup_containing_dir (const char *path, struct dir *base)
 {
@@ -102,6 +125,7 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
   strlcpy (buffer, path, strlen (path) + 1);
 
   struct dir *current_dir = base;
+  dir_lock_dir (current_dir);
   struct inode *current_inode;
 
   /* Loop executes once for each WORD in the NAME filepath */
@@ -112,10 +136,12 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
         {
           if (current_dir != base)
             dir_close (current_dir);
+          dir_unlock_dir (current_dir);
 
           if (inode_is_dir (current_inode))
             {
               current_dir = dir_open (current_inode);
+              dir_lock_dir (current_dir);
               if (current_dir == NULL)
                 break;
             }
@@ -130,6 +156,9 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
         {
           if (current_dir != base)
             dir_close (current_dir);
+
+          dir_unlock_dir (current_dir);
+
           current_dir = NULL;
           break;
         }
@@ -137,9 +166,12 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
 
   free (buffer);
 
+  if (current_dir != NULL)
+    dir_unlock_dir (current_dir);
+
   if (current_dir == base)
     return dir_reopen (base);
-
+  
   return current_dir;
 
 }
@@ -152,7 +184,9 @@ dir_create (block_sector_t sector, size_t entry_cnt)
   return inode_create (sector, entry_cnt * sizeof (struct dir_entry), true);
 }
 
-/* Adds the default .. and . directories to the given DIR with parent dir inode PARENT */
+/* Adds the default .. and . directories to the given DIR with parent dir inode PARENT.
+   This does not need to lock the directory because presumably only the initializer holds
+   a reference to the dir. */
 bool
 dir_init (block_sector_t sector, struct inode *parent)
 {

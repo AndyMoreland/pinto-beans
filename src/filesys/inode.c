@@ -523,4 +523,14 @@ inode_get_open_count (const struct inode *inode)
   return inode->open_cnt;
 }
 
+void
+inode_acquire_dir_lock (struct inode *inode)
+{
+  lock_acquire (&inode->dir_lock);
+}
 
+void
+inode_release_dir_lock (struct inode *inode)
+{
+  // lock_release (&inode->dir_lock);
+}
