@@ -42,7 +42,7 @@ static void
 dir_unlock_dir (struct dir *dir)
 {
   ASSERT (dir->inode != NULL);
-  // inode_release_dir_lock (dir->inode);
+  inode_release_dir_lock (dir->inode);
 }
 
 /* Returns pointer to heap allocated filename.

@@ -532,5 +532,5 @@ inode_acquire_dir_lock (struct inode *inode)
 void
 inode_release_dir_lock (struct inode *inode)
 {
-  // lock_release (&inode->dir_lock);
+  lock_release (&inode->dir_lock);
 }
