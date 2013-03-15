@@ -7,6 +7,10 @@
 #include "threads/malloc.h"
 #include "cache.h"
 #include "filesys.h"
+#include "threads/thread.h"
+
+#define CACHE_MAX_READAHEAD 16
+#define CACHE_NUM_READAHEAD_THREADS 4
 
 enum cache_flags
   {
@@ -36,6 +40,11 @@ static int cache_size;
 static int cache_clock_cursor; 
 static struct lock cache_lock;
 
+static block_sector_t rahead_queue[CACHE_MAX_READAHEAD];
+static unsigned rahead_start, rahead_size;
+static struct lock rahead_lock;
+static struct condition rahead_available;
+
 static unsigned cache_hash_hash_func (const struct hash_elem *, void *);
 static bool cache_hash_less_func (const struct hash_elem *,
                                   const struct hash_elem *, void *);
@@ -46,6 +55,8 @@ static void cache_do_disk_read (struct cache_entry *);
 static struct cache_entry *cache_find_available (void);
 static struct cache_entry *cache_lookup (block_sector_t sector, bool create);
 static struct cache_entry *cache_retain (block_sector_t sector);
+
+static void rahead_thread_func (void *aux UNUSED);
 
 void 
 cache_init (int size)
@@ -65,8 +76,18 @@ cache_init (int size)
   cache_clock_cursor = 0;
 
   lock_init (&cache_lock);
+  rahead_start = rahead_size = 0;
+  lock_init (&rahead_lock);
+  cond_init (&rahead_available);
   if (!hash_init (&cache_hash, cache_hash_hash_func, cache_hash_less_func, NULL))
     PANIC ("could not create cache hash table");
+
+  for (i = 0; i < CACHE_NUM_READAHEAD_THREADS; ++i)
+    {
+      char tname[16];
+      snprintf (tname, sizeof (tname), "rahead-%d", i);
+      thread_create (tname, PRI_DEFAULT, rahead_thread_func, NULL);
+    }
 }
 
 void 
@@ -106,9 +127,46 @@ cache_write (block_sector_t sector, const void *src)
     }
 }
 
-void cache_readahead (block_sector_t sector)
+static block_sector_t* 
+rahead_entry (unsigned i)
 {
-  
+  return rahead_queue + ((rahead_start + i) % CACHE_MAX_READAHEAD);
+}
+
+static bool 
+rahead_find (unsigned sector)
+{
+  unsigned i;
+  for (i = 0; i < rahead_size; ++i)
+    {
+      if (*rahead_entry (i) == sector)
+        return true;
+    }
+  return false;
+}
+
+static bool
+cache_find (block_sector_t sector)
+{
+  struct cache_entry entry_dummy;
+  entry_dummy.sector = sector;
+
+  return hash_find (&cache_hash, &entry_dummy.elem) != NULL;
+}
+
+void 
+cache_readahead (block_sector_t sector)
+{
+  lock_acquire (&cache_lock);
+  if (!rahead_find (sector)
+      && !cache_find (sector) 
+      && rahead_size < CACHE_MAX_READAHEAD)
+    {
+      *rahead_entry (rahead_size++) = sector;
+      cond_signal (&rahead_available, &cache_lock);
+    }
+    
+  lock_release (&cache_lock);
 }
 
 void *
@@ -300,6 +358,7 @@ cache_do_evict (struct cache_entry *entry, block_sector_t new_sector)
 {
   ASSERT (lock_held_by_current_thread (&cache_lock));
   ASSERT (lock_held_by_current_thread (&entry->entry_lock));
+  ASSERT (entry->retain_cnt == entry->release_cnt);
 
   if (entry->flags & USED)
     {
@@ -316,3 +375,36 @@ cache_do_evict (struct cache_entry *entry, block_sector_t new_sector)
   hash_insert (&cache_hash, &entry->elem); 
 }
 
+/* readahead / writebehind implementation */
+
+static block_sector_t 
+rahead_pop (void)
+{
+  block_sector_t s = *rahead_entry (0);
+  ++rahead_start;
+  --rahead_size;
+  return s;
+}
+
+static void
+rahead_thread_func (void *aux UNUSED)
+{
+  while (true)
+    {
+      lock_acquire (&cache_lock);
+      while (!rahead_size)
+        cond_wait (&rahead_available, &cache_lock);
+      block_sector_t sector = rahead_pop ();
+      struct cache_entry *entry = cache_lookup (sector, true);
+      lock_release (&cache_lock);
+      if (!entry)
+        continue;
+
+      if (entry->flags & INIT)
+        {
+          entry->flags ^= INIT; 
+          cache_do_disk_read (entry);
+        }
+      lock_release (&entry->entry_lock);
+    }
+}

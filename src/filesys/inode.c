@@ -146,8 +146,6 @@ byte_to_sector (struct inode *inode, off_t pos, bool create)
                     INODE_NUM_DBL_INDIRECT, 2, create, disk);
     }
 
-  // FIXME: should this be here?
-  printf ("block too big for disk: %u\n", block);
   cache_end (disk, false);
   return INODE_PTR_INVALID;
 }
@@ -163,6 +161,7 @@ inode_init (void)
   list_init (&open_inodes);
   cache_init (64);
 }
+
 static off_t
 inode_do_write (struct inode *inode, const void *buffer_, off_t size,
                 off_t offset, bool extend);
@@ -185,9 +184,7 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
 
   struct inode *inode = inode_open (sector);
   if (inode->open_cnt > 1)
-    {
-      return false;
-    }
+    return false;
 
   struct inode_disk *disk = cache_begin (sector);
   memset (disk, INODE_PTR_INVALID, sizeof *disk);
@@ -360,6 +357,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 {
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
+  int len = inode_length (inode);
 
   while (size > 0) 
     {
@@ -367,7 +365,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
       /* Bytes left in inode, bytes left in sector, lesser of the two. */
-      int inode_left = (int) inode_length (inode) - offset;
+      int inode_left = len - offset;
       int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
       int min_left = inode_left < sector_left ? inode_left : sector_left;
 
@@ -376,6 +374,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
+      inode_sanitize (inode);
       block_sector_t sector_idx = byte_to_sector (inode, offset, false);
 
       if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
@@ -386,7 +385,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       else 
         {
           uint8_t *data = cache_begin (sector_idx);
-          // FIXME: what if an exception happens right here? will transaction hang?
           memcpy (buffer + bytes_read, data + sector_ofs, chunk_size);
           cache_end (data, false);
         }
@@ -395,6 +393,14 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       size -= chunk_size;
       offset += chunk_size;
       bytes_read += chunk_size;
+    }
+
+  off_t readahead_pos = DIV_ROUND_UP (offset, BLOCK_SECTOR_SIZE);
+  if (readahead_pos < inode_length (inode))
+    {
+      block_sector_t sector_idx = byte_to_sector (inode, readahead_pos, false);
+      ASSERT (sector_is_valid (sector_idx));
+      cache_readahead (sector_idx);
     }
 
   return bytes_read;
@@ -423,7 +429,7 @@ inode_do_write (struct inode *inode, const void *buffer_, off_t size,
       int left = BLOCK_SECTOR_SIZE - sector_ofs;
       if (!extend)
         {
-          off_t inode_left = inode_length (inode) - offset;
+          int inode_left = (int) inode_length (inode) - offset;
           if (inode_left < left)
             left = inode_left;
         } 
