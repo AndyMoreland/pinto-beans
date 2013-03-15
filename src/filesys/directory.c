@@ -96,9 +96,9 @@ dir_resolve_path (const char *path, struct dir *base)
     }
   struct inode *result;
   dir_lookup (containing_dir, filename, &result);
+  dir_unlock_dir (containing_dir);
   dir_close (containing_dir);
   free (filename);
-  dir_unlock_dir (containing_dir);
   
   return result;
 }
@@ -134,9 +134,9 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
     {
       if (dir_lookup (current_dir, word, &current_inode))
         {
+          dir_unlock_dir (current_dir);
           if (current_dir != base)
             dir_close (current_dir);
-          dir_unlock_dir (current_dir);
 
           if (inode_is_dir (current_inode))
             {
@@ -154,10 +154,10 @@ dir_lookup_containing_dir (const char *path, struct dir *base)
         }
       else 
         {
+          dir_unlock_dir (current_dir);
+
           if (current_dir != base)
             dir_close (current_dir);
-
-          dir_unlock_dir (current_dir);
 
           current_dir = NULL;
           break;
