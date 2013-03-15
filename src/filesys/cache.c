@@ -8,6 +8,7 @@
 #include "cache.h"
 #include "filesys.h"
 #include "threads/thread.h"
+#include "devices/timer.h"
 
 #define CACHE_MAX_READAHEAD 16
 #define CACHE_NUM_READAHEAD_THREADS 4
@@ -68,6 +69,7 @@ static struct cache_entry *cache_lookup (block_sector_t sector, bool create);
 static struct cache_entry *cache_retain (block_sector_t sector);
 
 static void rahead_thread_func (void *aux UNUSED);
+static void wbehind_thread_func (void *aux UNUSED);
 
 /* Initializes the cache to store SIZE sectors. */
 void 
@@ -100,6 +102,8 @@ cache_init (int size)
       snprintf (tname, sizeof (tname), "rahead-%d", i);
       thread_create (tname, PRI_DEFAULT, rahead_thread_func, NULL);
     }
+
+  thread_create ("wbehind", PRI_DEFAULT, wbehind_thread_func, NULL);
 }
 
 /* Reads sector SECTOR into DST from the cache.
@@ -380,8 +384,10 @@ cache_do_flush (struct cache_entry *entry)
 
   if ((entry->flags & USED) && (entry->flags & DIRTY))
     {
-      block_write (fs_device, entry->sector, entry->data);
       entry->flags ^= DIRTY;
+      lock_release (&entry->entry_lock);
+      block_write (fs_device, entry->sector, entry->data);
+      lock_acquire (&entry->entry_lock);
     }
 }
 
@@ -441,3 +447,24 @@ rahead_thread_func (void *aux UNUSED)
       lock_release (&entry->entry_lock);
     }
 }
+
+static void 
+wbehind_thread_func (void *aux UNUSED)
+{
+  int cursor = 0;
+  while (true)
+    {
+      lock_acquire (&cache_lock);
+      struct cache_entry *entry = cache_entries + (cursor % cache_size);
+      lock_acquire (&entry->entry_lock);
+      ++entry->retain_cnt;
+      lock_release (&cache_lock);
+      cache_do_flush (entry);           
+      --entry->retain_cnt;
+      lock_release (&entry->entry_lock);
+      ++cursor;
+
+      timer_msleep (1000 / cache_size);
+    }
+}
+
