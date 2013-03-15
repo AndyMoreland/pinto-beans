@@ -2,8 +2,6 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
-//FIXME: remove this
-#include "stdio.h"
 
 /* An open file. */
 struct file 
