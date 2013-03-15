@@ -336,6 +336,8 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   if (*name == '\0' || strlen (name) > NAME_MAX)
     return false;
 
+  dir_lock_dir (dir);
+
   /* Check that NAME is not in use. */
   if (lookup (dir, name, NULL, NULL))
     goto done;
@@ -359,6 +361,7 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   success = inode_write_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
 
  done:
+  dir_unlock_dir (dir);
   return success;
 }
 
@@ -398,6 +401,8 @@ dir_remove (struct dir *dir, const char *name)
   ASSERT (dir != NULL);
   ASSERT (name != NULL);
 
+  dir_lock_dir (dir);
+  
   /* Find directory entry. */
   if (!lookup (dir, name, &e, &ofs))
     goto done;
@@ -422,6 +427,7 @@ dir_remove (struct dir *dir, const char *name)
   
  done:
   inode_close (inode);
+  dir_unlock_dir (dir);
   return success;
 }
 

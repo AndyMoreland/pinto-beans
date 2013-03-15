@@ -16,6 +16,10 @@ Andy Moreland <andymo@stanford.edu>
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
 
+We're doing something that feels a little sleazy by storing directory
+locks and an is_directory bool on inodes. This is how linux does it,
+though, so there is precedent :-).
+
 >> Describe briefly which parts of the assignment were implemented by
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
@@ -39,10 +43,17 @@ Alex Ryan: all
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
 
+FIXME ALEX WRITE PLEASE
+
 ---- SYNCHRONIZATION ----
 
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
+
+When an inode is going to be extended we hold an `extend_lock` on it that 
+prevents anyone else from starting their extension. Once the lock is
+acquired, we check the length of the file in order to make sure
+that an extend needs to still be dnoe.
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
@@ -51,12 +62,21 @@ Alex Ryan: all
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
+When A reads from F it checks the length of F. While B is writing to F
+it does not increase the length of F until the data has been fully
+initialized. So, if A sees a length that is long enough to read what B
+is writing then B must have written the data.
+
+FIXME ALEX VERIFY
+
 >> A5: Explain how your synchronization design provides "fairness".
 >> File access is "fair" if readers cannot indefinitely block writers
 >> or vice versa.  That is, many processes reading from a file cannot
 >> prevent forever another process from writing the file, and many
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
+
+FIXME ALEX WRITE
 
 ---- RATIONALE ----
 
@@ -65,6 +85,8 @@ Alex Ryan: all
 >> indirect blocks?  If not, why did you choose an alternative inode
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
+
+FIXME ALEX WRITE
 
 			    SUBDIRECTORIES
 			    ==============
@@ -105,7 +127,13 @@ which is stored on its inode whenever we need to perform an operation
 on the directory. This prevents simultaneous operations on any given
 directory. 
 
-FIXME more
+Removing a directory requires us to (1) acquire a lock on its parent
+and (2) lookup and open its inode. We perform (1) before (2) so 
+by the time the second remover gets to lookup the dir's inode the
+dir will already be removed from its parent. Thus, the second remover
+will not see it and the race is prevented.
+
+Adding to a directory follows the same outline, as do other operations.
 
 >> B5: Does your implementation allow a directory to be removed if it
 >> is open by a process or if it is in use as a process's current
