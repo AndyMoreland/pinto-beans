@@ -32,9 +32,7 @@ dir_lock_dir (struct dir *dir)
 {
   ASSERT (dir != NULL);
   ASSERT (dir->inode != NULL);
-  printf ("About to acquire lock!\n");
   inode_acquire_dir_lock (dir->inode);
-  printf ("Acquired lock!\n");
 }
 
 
