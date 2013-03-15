@@ -40,10 +40,72 @@ Alex Ryan: all
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+From inode.c:
+
+struct inode_indirect_disk
+  {
+    block_sector_t ptrs[INDIRECT_CAP];
+  };
+
+This struct is used to represent a block of pointers to sectors that is
+stored in disk in an indirect block.
+
+struct inode_disk
+  {
+    off_t length;                       /* File size in bytes. */
+    unsigned magic;                     /* Magic number. */
+    struct 
+      {
+        block_sector_t direct[INODE_NUM_DIRECT];
+        block_sector_t indirect[INODE_NUM_INDIRECT];
+        block_sector_t dbl_indirect[INODE_NUM_DBL_INDIRECT];
+      };
+    bool is_dir;                      /* True if inode represents a directory. */
+    uint32_t unused[0];               /* Not used. */
+  };
+
+`struct inode_disk` is the on-disk representation of an inode.
+
+`length` is self-explanatory.
+`magic` attempts to detect corruption.
+`direct` is an array of direct block_sector numbers
+`indirect` is an array of block_sectors of `inode_indirect_disk`s
+`dbl_indirect` is an array of block_sectors of `inode_indirect_disks`
+  of block sectors of `inode_indirect_disk`s
+`is_dir is true if the inode stores a dir
+
+struct inode 
+  {
+    struct list_elem elem;              /* Element in inode list. */
+    block_sector_t sector;              /* Sector number of disk location. */
+    int open_cnt;                       /* Number of openers. */
+    bool removed;                       /* True if deleted, false otherwise. */
+    int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
+    ...
+    struct lock metadata_lock;          /* Protects deny_write_cnt, open_cnt, etc. */
+    struct lock extend_lock;            /* Held while inode is being extended. */
+  };
+
+`struct inode` is an in-memory inode. Most of its members are unchanged. 
+The comments are self-explanatory. 
+
+FIXME: ALEX VERIFY ^^^
+
+FIXME: ALEX VERIFY THIS IS ALL
+
+
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
 
-FIXME ALEX WRITE PLEASE
+We have 123 direct blocks of 512 bytes each,
+1 indirect block capable of pointing to 128 blocks of 512 bytes each
+1 dbly indirect pointing to 128 indirects pointing to 128 512 byte blocks
+
+so
+
+123 * 512 + 128 * 512 + 128 * 128 * 512 = 8517120 bytes.
+
+FIXME ALEX PLEASE VERIFY
 
 ---- SYNCHRONIZATION ----
 
@@ -96,6 +158,58 @@ FIXME ALEX WRITE
 >> B1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+from filesys.h:
+
+struct filedir
+  {
+    union 
+      {
+        struct file *f;
+        struct dir *d;
+      };
+    enum filedir_type mode;
+  };
+
+`struct filedir` is used in places where we can return either a file 
+  or a dir, like filesys_open. Which thing it stores is indicated by `mode`.
+
+enum filedir_type
+  {
+    FILE_DESCRIPTOR_FILE,
+    FILE_DESCRIPTOR_DIR
+  };
+
+This enum is used by `struct filedir` in order to indicate if it is storing
+  a reference to a file or a dir.
+
+from syscall.c:
+
+struct file_descriptor {
+  struct list_elem elem;
+  struct filedir *filedir; // this was changed 
+  int fd_id;
+};
+
+`filedir` now stores either a file or dir. The structure that holds this
+  is described above.
+
+from thread.h in `struct thread`:
+
+++ struct dir *working_directory;      
+
+`working_directory` is an opened dir representing thread's working directory.
+
+
+from inode.c in `struct inode`:
+
+struct lock dir_lock;
+
+`dir_lock` is a little weird.
+It's acquired by directory.c in order to prevent concurrent directory
+operations. We placed it here because inodes were shared between all
+`struct dir`s associated with an inode.
+
 
 ---- ALGORITHMS ----
 
@@ -166,6 +280,74 @@ prevent anyone from `remove`ing it.
 >> C1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+from `cache.c`:
+
+enum cache_flags
+  {
+    USED = 0x1,
+    ACCESSED = 0x2,
+    DIRTY = 0x4,
+    INIT = 0x8,
+    READING_DISK = 0x16,
+  }; 
+
+This enum is used in `struct cache_entry`s in order to distinguish
+  which state the entry is in.
+
+`used` means the cache_entry is in use.
+`accessed` means it was accessed since the last clock sweep.
+`dirty` means it's been written to since it's last flush.
+`init` means that we are currently building the cache.
+`reading_disk` means that we're reading it in from disk.
+
+struct cache_entry
+  {
+    block_sector_t sector;
+
+    enum cache_flags flags;   
+    int retain_cnt;
+    int release_cnt;
+    struct lock entry_lock;
+    struct condition finished;
+    struct hash_elem elem;
+    uint8_t data[BLOCK_SECTOR_SIZE];
+  };
+
+This is what we store in our cache hashtable. It represents one
+  cached sector.
+
+`retain_cnt` is a count of clients currently reading/writing to this
+  block.
+`release_cnt` is a count of how many clients have un-retained.
+`entry_lock` is a monitor for this struct.
+`finished` is a condition variable that is triggered once the sector
+  is read in from disk into this entry's store.
+`elem` is the elem for storage in the hash.
+`data` is the sector data.
+
+static struct hash cache_hash;
+
+This is our sector cache.
+
+static struct cache_entry *cache_entries;
+
+This is a dynamically allocated array of cache_entries which stores
+  as many entries as our cache was initialized with.
+
+static int cache_size;
+
+How many sectors we're allowed to cache
+
+static int cache_clock_cursor; 
+
+Where our clock hand points. This is used by the eviction algorithm.
+
+static struct lock cache_lock;
+
+This lock monitors the cache_hash. It's acquired before we look for
+  an entry to evict and before we flush the cache. 
+
 
 ---- ALGORITHMS ----
 
