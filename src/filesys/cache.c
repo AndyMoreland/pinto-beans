@@ -19,7 +19,7 @@ enum cache_flags
     ACCESSED = 0x2,
     DIRTY = 0x4,
     INIT = 0x8,
-    READING_DISK = 0x16,
+    READING_DISK = 0x10
   }; 
 
 /* Entry in our cache. */
@@ -109,11 +109,7 @@ cache_read (block_sector_t sector, void *dst)
 {
   struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
-    {
-      // FIXME: remove this.
-      printf ("warning: no disk cache available: reading %u\n", sector);
-      block_read (fs_device, sector, dst);
-    }
+    block_read (fs_device, sector, dst);
   else
     {
       memcpy (dst, entry->data, BLOCK_SECTOR_SIZE);
@@ -130,11 +126,7 @@ cache_write (block_sector_t sector, const void *src)
 {
   struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
-    {
-      // FIXME: remove this.
-      printf ("warning: no disk cache available: write %u\n", sector);
-      block_write (fs_device, sector, src);
-    }
+    block_write (fs_device, sector, src);
   else
     {
       memcpy (entry->data, src, BLOCK_SECTOR_SIZE);
@@ -269,12 +261,13 @@ cache_lookup (block_sector_t sector, bool create)
   else if (!create)
     return NULL; 
   else
-    entry = cache_find_available ();
-
-  if (entry)
     {
-      cache_do_evict (entry, sector);
-      entry->flags |= INIT;
+      entry = cache_find_available ();
+      if (entry)
+        {
+          cache_do_evict (entry, sector);
+          entry->flags |= INIT;
+        }
     }
   return entry;
 }
