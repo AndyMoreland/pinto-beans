@@ -351,7 +351,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      inode_sanitize (inode);
       block_sector_t sector_idx = byte_to_sector (inode, offset, false);
 
       if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
