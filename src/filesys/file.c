@@ -2,7 +2,8 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
-//FIXME: remove this
+
+// FIXME: REMOVE
 #include "stdio.h"
 
 /* An open file. */

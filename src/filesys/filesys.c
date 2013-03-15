@@ -40,6 +40,8 @@ void
 filesys_done (void) 
 {
   free_map_close ();
+
+  /* Write out our buffer cache to disk. */
   cache_flush_all ();
 }
 
@@ -55,7 +57,6 @@ filesys_create (const char *path, off_t initial_size)
   if (!filename)
     return false;
 
-  // printf ("Creating file: [%s]\n", filename);
   struct dir *dir = dir_open_base_dir (path);
   struct dir *containing_dir = dir_lookup_containing_dir (path, dir);
   bool success = (dir != NULL && containing_dir != NULL
@@ -77,10 +78,15 @@ filesys_create (const char *path, off_t initial_size)
   return success;
 }
 
+/* Opens NAME and returns a FILEDIR pointing to file or dir
+   at NAME. If nothing is found then NULL is returned. */
 struct filedir *
 filesys_open (const char *name)
 {
   struct filedir *fd = malloc (sizeof (struct filedir));
+  if (fd == NULL)
+    return NULL;
+
   fd->f = filesys_open_file (name);
 
   if (fd->f != NULL)
@@ -130,6 +136,7 @@ filesys_open_file (const char *path)
     return file_open (inode);
 }
 
+/* Returns true if PATH is non-empty and all '/' characters. */
 static bool
 filesys_path_all_slashes (const char *path)
 {
@@ -179,7 +186,6 @@ filesys_open_dir (const char *path)
    Returns true if successful, false on failure.
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
-//FIXME my freeing here is terrible.
 bool
 filesys_remove (const char *path) 
 {
@@ -210,6 +216,7 @@ filesys_remove (const char *path)
   return success;
 }
 
+/* Create directory at PATH. Returns true if success. */
 bool
 filesys_mkdir (const char *path)
 {
@@ -234,7 +241,6 @@ filesys_mkdir (const char *path)
       success = success && dir_create (inode_sector, DEFAULT_DIR_SIZE);
       success = success && dir_init (inode_sector, dir_get_inode (containing_dir));
       success = success && dir_add (containing_dir, filename, inode_sector);
-      // printf ("Attempting to add sector [%d] to [%p] and success: [%d]\n", inode_sector, dir_get_inode (containing_dir), success);
       dir_close (containing_dir);
       dir_close (dir);
     }
