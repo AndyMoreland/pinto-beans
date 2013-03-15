@@ -15,7 +15,6 @@ struct dir
     off_t pos;                          /* Current position. */
   };
 
-
 /* A single directory entry. */
 struct dir_entry 
   {
@@ -24,26 +23,26 @@ struct dir_entry
     bool in_use;                        /* In use or free? */
   };
 
-
 static bool dir_can_remove_dir (struct inode *dir_inode);
 
+/* Lock DIR. This lock is not exposed outside of
+   this file so make sure to unlock it before returning
+   to the user. */
 static void
 dir_lock_dir (struct dir *dir)
 {
-  ASSERT (dir != NULL);
-  ASSERT (dir->inode != NULL);
   inode_acquire_dir_lock (dir->inode);
 }
 
-
+/* Unlock DIR. Must be called before returning from
+   any directory entrypoint function that locks DIR. */
 static void
 dir_unlock_dir (struct dir *dir)
 {
-  ASSERT (dir->inode != NULL);
   inode_release_dir_lock (dir->inode);
 }
 
-/* Returns pointer to heap allocated filename.
+/* Returns pointer to heap allocated filename component of PATH.
    Returns NULL if memory allocation fails.
    Caller must free. */
 char *
@@ -52,7 +51,6 @@ dir_split_filename (const char *path)
   ASSERT (path != NULL);
 
   char *cursor;
-  // FIXME: for some reason path_cpy is one byte too low. not sure why. intuitively this should be >=
   for (cursor = &path[strlen (path)]; cursor > path; cursor--)
       if (*cursor == '/')
           break;
@@ -367,7 +365,6 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
 static bool
 dir_can_remove_dir (struct inode *dir_inode)
 {
-  //printf ("The open count for [%p] is: %d\n", dir_inode, inode_get_open_count (dir_inode));
   if (inode_get_open_count (dir_inode) > 1)
     return false;
 
@@ -383,7 +380,6 @@ dir_can_remove_dir (struct inode *dir_inode)
 
   dir_close (dir);
   
-  //printf ("Count is: %d\n", count);
 
   return count == 0;
 }
@@ -394,7 +390,6 @@ dir_can_remove_dir (struct inode *dir_inode)
 bool
 dir_remove (struct dir *dir, const char *name) 
 {
-  //printf// ("Removing [%s] from [%p]\n", name, dir);
   struct dir_entry e;
   struct inode *inode = NULL;
   bool success = false;
@@ -418,7 +413,6 @@ dir_remove (struct dir *dir, const char *name)
 
   /* Erase directory entry. */
   e.in_use = false;
-  // printf ("dir->inode: [%p], ofs: [%d]\n", dir->inode, ofs);
   if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
     goto done;
   
@@ -427,7 +421,6 @@ dir_remove (struct dir *dir, const char *name)
   success = true;
   
  done:
-  //printf ("success: %d\n", success);
   inode_close (inode);
   return success;
 }

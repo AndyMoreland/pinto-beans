@@ -8,6 +8,7 @@
 #include "cache.h"
 #include "filesys.h"
 
+/* Flags that reperesent the state of a cache slot. */
 enum cache_flags
   {
     USED = 0x1,
@@ -17,6 +18,7 @@ enum cache_flags
     READING_DISK = 0x16,
   }; 
 
+/* Entry in our cache. */
 struct cache_entry
   {
     block_sector_t sector;
@@ -30,10 +32,19 @@ struct cache_entry
     uint8_t data[BLOCK_SECTOR_SIZE];
   };
 
+/* Used to store sectors in our cache */
 static struct hash cache_hash;
+
+/* Dynamically allocated array of cache_entries. */
 static struct cache_entry *cache_entries;
+
+/* Size of our cache */
 static int cache_size;
+
+/* Clock hand cursor used in our evcition algorithm. */
 static int cache_clock_cursor; 
+
+/* Protect global cache state. */
 static struct lock cache_lock;
 
 static unsigned cache_hash_hash_func (const struct hash_elem *, void *);
@@ -47,6 +58,7 @@ static struct cache_entry *cache_find_available (void);
 static struct cache_entry *cache_lookup (block_sector_t sector, bool create);
 static struct cache_entry *cache_retain (block_sector_t sector);
 
+/* Initializes the cache to store SIZE sectors. */
 void 
 cache_init (int size)
 {
@@ -69,12 +81,15 @@ cache_init (int size)
     PANIC ("could not create cache hash table");
 }
 
+/* Reads sector SECTOR into DST from the cache.
+   Will transparently hit the disk if necessary. */
 void 
 cache_read (block_sector_t sector, void *dst)
 {
   struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
     {
+      // FIXME: remove this.
       printf ("warning: no disk cache available: reading %u\n", sector);
       block_read (fs_device, sector, dst);
     }
@@ -87,12 +102,15 @@ cache_read (block_sector_t sector, void *dst)
     }
 }
 
+/* Writes into SECTOR's cache entry from SRC, creating it if
+   it does not already exist. Will transparently hit the disk if necessary. */
 void 
 cache_write (block_sector_t sector, const void *src)
 {
   struct cache_entry *entry = cache_retain (sector);
   if (!entry) // no cache slot available
     {
+      // FIXME: remove this.
       printf ("warning: no disk cache available: write %u\n", sector);
       block_write (fs_device, sector, src);
     }
@@ -111,6 +129,11 @@ void cache_readahead (block_sector_t sector)
   
 }
 
+/* Signal that we are interested in a sector.
+   Returns a pointer to the sector's cache entry.
+   Will start caching a SECTOR if it has not been cached,
+   and the caching will last until `cache_end` is called
+   an appropriate number of times. */
 void *
 cache_begin (block_sector_t sector)
 {
@@ -121,6 +144,7 @@ cache_begin (block_sector_t sector)
 #define cache_entry(dat) ((struct cache_entry *) \
         ((uint8_t *)dat - offsetof (struct cache_entry, data)))
 
+/* Stop retaining a cache entry. */
 void 
 cache_end (void *cache_block, bool dirty)
 {
@@ -132,6 +156,7 @@ cache_end (void *cache_block, bool dirty)
   lock_release (&entry->entry_lock);
 }
 
+/* Write the cache to disk. */
 void 
 cache_flush_all (void)
 {
@@ -147,6 +172,8 @@ cache_flush_all (void)
   lock_release (&cache_lock);
 }
 
+/* Used for hashing `cache_entry`s. Returns hash_int called on
+   E's sector number. */
 static unsigned 
 cache_hash_hash_func (const struct hash_elem *e, void *aux UNUSED)
 {
@@ -154,6 +181,8 @@ cache_hash_hash_func (const struct hash_elem *e, void *aux UNUSED)
   return hash_int ((int)entry->sector);
 }
 
+/* Used for hashing `cache_entry`s. Returns true if A has a lower
+   sector number than B. */
 static bool 
 cache_hash_less_func (const struct hash_elem *ae,
                       const struct hash_elem *be, void *aux UNUSED)
@@ -164,6 +193,8 @@ cache_hash_less_func (const struct hash_elem *ae,
   return a->sector < b->sector;
 }
 
+/* Returns the `cache_entry` of SECTOR in the cache or NULL if not found.
+   Will create a cache_entry for SECTOR if CREATE is true. */
 static struct cache_entry *
 cache_lookup (block_sector_t sector, bool create)
 {
@@ -190,6 +221,7 @@ cache_lookup (block_sector_t sector, bool create)
   return entry;
 }
 
+/* Push clock hand forward. */
 static void 
 advance_clock_cursor (void)
 {
@@ -198,6 +230,9 @@ advance_clock_cursor (void)
     cache_clock_cursor = 0;
 }
 
+/* Is ENTRY a valid entry to evict?
+   Returns true if it is unused or it has not been accessed
+   this iteration or if it is no longer being retained. */
 static bool 
 cache_should_evict (struct cache_entry *entry)
 {
@@ -216,6 +251,8 @@ cache_should_evict (struct cache_entry *entry)
   return false;
 }
 
+/* Find an ENTRY that can be evicted or that has space and return it.
+   Will only iterate twice. NULL is returned if nothing found after two loops. */
 static struct cache_entry*
 cache_find_available (void)
 {
@@ -237,6 +274,8 @@ cache_find_available (void)
   return available;
 }
 
+/* Start caching (or increment the retain count) of SECTOR.
+   Returns SECTOR's cache_entry. */
 static struct cache_entry * 
 cache_retain (block_sector_t sector)
 {
@@ -267,9 +306,8 @@ cache_retain (block_sector_t sector)
 }
 
 /* Performs a disk read for the given cache entry, updating its
- * cache contents to match its disk sector. It is assumed that the 
- * entry_lock is held by current thread.
- */
+   cache contents to match its disk sector. It is assumed that the 
+   entry_lock is held by current thread. */ 
 static void
 cache_do_disk_read (struct cache_entry *entry)
 {
@@ -283,6 +321,7 @@ cache_do_disk_read (struct cache_entry *entry)
   cond_broadcast (&entry->finished, &entry->entry_lock);
 }
 
+/* Write ENTRY to disk. */
 static void 
 cache_do_flush (struct cache_entry *entry)
 {
@@ -295,6 +334,7 @@ cache_do_flush (struct cache_entry *entry)
     }
 }
 
+/* Evict ENTRY's sector from the cache storing NEW_SECTOR in it. */
 static void 
 cache_do_evict (struct cache_entry *entry, block_sector_t new_sector)
 {

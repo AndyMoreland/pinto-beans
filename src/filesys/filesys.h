@@ -20,12 +20,14 @@ struct dir *filesys_open_dir (const char *name);
 bool filesys_mkdir (const char *path);
 bool filesys_remove (const char *name);
 
+/* Used by filedir in order to signify if it stores a dir or a file. */
 enum filedir_type
   {
     FILE_DESCRIPTOR_FILE,
     FILE_DESCRIPTOR_DIR
   };
 
+/* Used in locations where either a file or dir may be returned. */
 struct filedir
   {
     union 

@@ -66,6 +66,7 @@ struct inode
     struct lock extend_lock;
   };
 
+/* Is BLOCK a valid SECTOR? */
 static bool
 sector_is_valid (block_sector_t block)
 {
@@ -75,12 +76,14 @@ sector_is_valid (block_sector_t block)
 static block_sector_t 
 inode_get_ptr (block_sector_t *block_ptr, bool create)
 {
+  // FIXME: deal with this assert
 //  ASSERT (create == !sector_is_valid(*block_ptr));
   if (create)
     free_map_allocate (1, block_ptr);
   return *block_ptr;
 }
 
+// FIXME: document
 static block_sector_t
 inode_indirect_lookup (off_t block, block_sector_t *ptrs, off_t count,
                        int depth, bool create, void *parent)
@@ -121,6 +124,9 @@ inode_indirect_lookup (off_t block, block_sector_t *ptrs, off_t count,
       INDIRECT_CAP, depth - 1, create, child);
 }
 
+/* Returns sector number containing POS in INODE. If
+   CREATE is true then it may create a sector if
+   necessary. */
 static block_sector_t
 byte_to_sector (struct inode *inode, off_t pos, bool create)
 {
@@ -205,6 +211,7 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   return success;
 }
 
+// FIXME: comment this.
 static bool 
 inode_sanitize (struct inode *inode)
 {
@@ -220,6 +227,7 @@ inode_sanitize (struct inode *inode)
 
   if (fail)
     {
+      // FIXME: need to remove these printfs
       printf (">> INVALID INODE STATE: (len=%u)\n", len);
       for (i = 0; !fail && i < blocks; i++)
         {
@@ -248,9 +256,7 @@ inode_open (block_sector_t sector)
       inode = list_entry (e, struct inode, elem);
       if (inode->sector == sector) 
         {
-          // printf ("Re-opening [%p]\n", inode);
           inode_reopen (inode);
-          // printf ("!!opening [%p]\n", inode);
           return inode; 
         }
     }
@@ -270,7 +276,6 @@ inode_open (block_sector_t sector)
   lock_init (&inode->metadata_lock);
   lock_init (&inode->extend_lock);
   /* FIXME: readahead inode->sector? */
-  // printf ("!!opening [%p]\n", inode);
   return inode;
 }
 
@@ -290,6 +295,7 @@ inode_get_inumber (const struct inode *inode)
   return inode->sector;
 }
 
+// FIXME: COMMENT
 static void 
 inode_close_sector (block_sector_t sector, int depth)
 {
@@ -400,6 +406,8 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   return bytes_read;
 }
 
+/* Writes SIZE bytes from BUFFER_ at OFFSET in INODE and will extend INODE
+   to have enough space if EXTEND is true. Returns how many bytes written */
 static off_t
 inode_do_write (struct inode *inode, const void *buffer_, off_t size,
                 off_t offset, bool extend)
@@ -557,19 +565,20 @@ inode_is_dir (const struct inode *inode)
 }
 
 /* Returns the `open_count` of an inode. */
-
 int
 inode_get_open_count (const struct inode *inode)
 {
   return inode->open_cnt;
 }
 
+/* Acquire the DIR_LOCK on INODE */
 void
 inode_acquire_dir_lock (struct inode *inode)
 {
   lock_acquire (&inode->dir_lock);
 }
 
+/* Release the DIR_LOCK on INODE */
 void
 inode_release_dir_lock (struct inode *inode)
 {

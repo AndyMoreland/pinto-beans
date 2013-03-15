@@ -668,7 +668,8 @@ is_thread (struct thread *t)
 /* Does basic initialization of T as a blocked thread named
    NAME. */
 static void
-init_thread (struct thread *t, const char *name, int priority, int nice, fixed_point recent_cpu, struct dir *working_directory)
+init_thread (struct thread *t, const char *name, int priority, int nice, 
+             fixed_point recent_cpu, struct dir *working_directory)
 {
   enum intr_level old_level;
 
