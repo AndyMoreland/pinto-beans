@@ -81,17 +81,18 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
-    ...
+    struct lock dir_lock;               /* If this inode represents a directory
+                                           then this prevents concurent access. */
     struct lock metadata_lock;          /* Protects deny_write_cnt, open_cnt, etc. */
     struct lock extend_lock;            /* Held while inode is being extended. */
   };
 
 `struct inode` is an in-memory inode. Most of its members are unchanged. 
-The comments are self-explanatory. 
-
-FIXME: ALEX VERIFY ^^^
-
-FIXME: ALEX VERIFY THIS IS ALL
+The comments are self-explanatory. It does seem a little odd to have three
+locks per inode, but dir_lock is specifically for directory-level operations,
+metadata_lock is to coordinate file extensions and sector memory operations
+(held for only very brief moments of time to atomically update `length' etc)
+and the extend_lock is used to prevent multiple simultaneous file extensions.
 
 
 >> A2: What is the maximum size of a file supported by your inode
@@ -101,11 +102,9 @@ We have 123 direct blocks of 512 bytes each,
 1 indirect block capable of pointing to 128 blocks of 512 bytes each
 1 dbly indirect pointing to 128 indirects pointing to 128 512 byte blocks
 
-so
+This adds up to 123 + 128 + 128*128 = 16635 blocks of 512 bytes each,
+for a total of 8517120 bytes (or about 8.123 megabytes).
 
-123 * 512 + 128 * 512 + 128 * 128 * 512 = 8517120 bytes.
-
-FIXME ALEX PLEASE VERIFY
 
 ---- SYNCHRONIZATION ----
 
@@ -115,7 +114,9 @@ FIXME ALEX PLEASE VERIFY
 When an inode is going to be extended we hold an `extend_lock` on it that 
 prevents anyone else from starting their extension. Once the lock is
 acquired, we check the length of the file in order to make sure
-that an extend needs to still be dnoe.
+that an extend needs to still be dnoe. (Note that the `extend_lock' is
+not even touched on a non-extending write or any read, so this still
+allows for very strong file concurrency.)
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
@@ -124,12 +125,17 @@ that an extend needs to still be dnoe.
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
-When A reads from F it checks the length of F. While B is writing to F
-it does not increase the length of F until the data has been fully
-initialized. So, if A sees a length that is long enough to read what B
-is writing then B must have written the data.
+The code takes very explicit care to:
+- (read) check file lengths before reading from any out-of-bounds sectors 
+- (write) initialize file data before increasing file length
 
-FIXME ALEX VERIFY
+In this way, process A will never try to access an invalid, or partially-
+initialized, block that B is going to work with. B only notifies A of
+the sector's existence after it has been completely initialized.
+(This system still allows for A to read sectors as they are written by
+B, provided that B stays ahead of A. Once A exhausts B's current
+written content, it will complete its read.)
+
 
 >> A5: Explain how your synchronization design provides "fairness".
 >> File access is "fair" if readers cannot indefinitely block writers
@@ -138,7 +144,16 @@ FIXME ALEX VERIFY
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
 
-FIXME ALEX WRITE
+The only blocking file operation that we support is an extending write,
+and that blocks only other extending writes. That is, almost all file
+operations proceed lockless, with only very minimal synchronization
+code for housekeeping purposes that touches only a lock or two to
+execute two statements.
+
+In particular, the code that is executed while holding a lock is
+fixed in runtime, rather than e.g. buffering large memory areas or
+allowing for arbitrary process code to occur while holding any locks.
+
 
 ---- RATIONALE ----
 
@@ -148,7 +163,25 @@ FIXME ALEX WRITE
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
 
-FIXME ALEX WRITE
+The inode index design that we chose addresses a balance between 
+possible file size and metadata overhead (both in size and runtime).
+First of all, ditching the contiguous file format leads tremendous 
+advantages to fragmentation and disk utilization, as files are free
+to segment themselves to fit into any available regions of the disk,
+rather than requiring for any specific available memory layout.
+
+However, indirection leads to space overhead of the intermediary indirect
+blocks as well as the cache expense, etc to actually traverse through
+them to fetch sector numbers. To minimize this overhead, we used as many
+direct pointers as possible so that small files will not be bloated
+proportionally by this extra overhead; but we still need to support
+8 megabyte files, so the single doubly-indirect block is used to
+provide for the expansion potential of a file.
+
+The cache in particular mitigates a lot of the computational overhead
+of fetching entries from a doubly-indirect block, as most consecutive
+file block reads will require very limited disk I/O for these indirect
+blocks.
 
 			    SUBDIRECTORIES
 			    ==============
@@ -289,7 +322,7 @@ enum cache_flags
     ACCESSED = 0x2,
     DIRTY = 0x4,
     INIT = 0x8,
-    READING_DISK = 0x16,
+    READING_DISK = 0x10,
   }; 
 
 This enum is used in `struct cache_entry`s in order to distinguish
@@ -297,9 +330,9 @@ This enum is used in `struct cache_entry`s in order to distinguish
 
 `used` means the cache_entry is in use.
 `accessed` means it was accessed since the last clock sweep.
-`dirty` means it's been written to since it's last flush.
-`init` means that we are currently building the cache.
-`reading_disk` means that we're reading it in from disk.
+`dirty` means it's been written to since its last flush.
+`init` means that the cache entry is fresh, requiring disk I/O
+`reading_disk` means that it is currently being init'd by somebody else
 
 struct cache_entry
   {
@@ -320,11 +353,14 @@ This is what we store in our cache hashtable. It represents one
 `retain_cnt` is a count of clients currently reading/writing to this
   block.
 `release_cnt` is a count of how many clients have un-retained.
-`entry_lock` is a monitor for this struct.
+(These two together define a reference-counted system for determining
+whether an entry is safe to evict.)
+
+`entry_lock` is a monitor for this struct's flags and release_cnt
 `finished` is a condition variable that is triggered once the sector
-  is read in from disk into this entry's store.
+  is read in from disk into this entry's store
 `elem` is the elem for storage in the hash.
-`data` is the sector data.
+`data` is the actual sector data that represents the disk 
 
 static struct hash cache_hash;
 
@@ -354,9 +390,46 @@ This lock monitors the cache_hash. It's acquired before we look for
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
+Using a clock-hand, we sweep over the cache looking for entries similar
+to our VM frame eviction algorithm. A cache entry can be evicted exactly
+when:
+- the entry is completely unused (i.e. on startup) 
+OR all of:
+- its lock is available (we try_acquire)
+- it has not been accessed since last clock-sweep (ACCESSED bit)
+- there are no outstanding references (i.e. retain_cnt == release_cnt)
+
+Two sweep attempts are given for the ACCESSED bit above, as the hand
+will clear entries as it sweeps over them. The last of these is the
+most domain-specific, as operations on cache entries are lockless.
+A cache entry is only guaranteed to be valid for an operation if
+it has been retained, but not yet released, by the transactor.
+
 >> C3: Describe your implementation of write-behind.
 
+Our write-behind implementation uses a single thread that tries to 
+write all N cache entries by sleeping in increments of 30 / N seconds,
+seeing if its current cursor points to a dirty entry and, if so,
+writes it to disk, before advancing its cursor and going back to
+sleep. This way, we guarantee that the entire cache is synch'd
+back to disk in case of a crash every 30 seconds, but it minimizes
+any spiky interaction with the disk or the rest of the operating
+system.
+
 >> C4: Describe your implementation of read-ahead.
+
+Our read-ahead implementation uses some fixed number of threads 
+(in the current implementation, NUM_READAHEAD_THREADS = 3) that
+all read from a cyclic buffer (of current size 16). New readahead
+requests are put into the buffer and cause a cond_signal to
+readahead_available, which is then hopefully serviced by one of
+these threads. 
+
+On wakeup, a readahead thread will find a suitable place to
+put the requested sector in the cache (unless it's already there!)
+and then start a disk I/O. Process threads that later show up
+to read from the sectors will block on the cache entry's 
+finished_reading condition, if needed, to finish the I/O.
 
 ---- SYNCHRONIZATION ----
 
@@ -364,8 +437,17 @@ This lock monitors the cache_hash. It's acquired before we look for
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
+As discussed above, active operations on cache buffer data have
+a `retain' on the cache entry, but have not yet `release'd this
+reference. A cache entry under no circumstances can be evicted 
+unless retain_cnt == release_cnt. (Also, these counts themselves
+are locked on read/write to prevent nonatomic write artifacts.)
+
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
+
+A freshly evicted block is in three states:
+1. chosen for eviction: this entry is first 
 
 ---- RATIONALE ----
 
