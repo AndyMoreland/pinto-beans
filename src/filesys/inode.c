@@ -82,7 +82,9 @@ inode_get_ptr (block_sector_t *block_ptr, bool create)
   return *block_ptr;
 }
 
-// FIXME: document
+/* Attempts to find BLOCK in PTRS which is a COUNT length array of sector numbers
+   that are DEPTH-ly indirect. Will create a new block if CREATE is true. 
+   Returns block_sector_t of BLOCK. */
 static block_sector_t
 inode_indirect_lookup (off_t block, block_sector_t *ptrs, off_t count,
                        int depth, bool create, void *parent)
@@ -207,35 +209,6 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   return success;
 }
 
-// FIXME: comment this.
-static bool 
-inode_sanitize (struct inode *inode)
-{
-  off_t len = inode_length (inode);
-  off_t blocks = bytes_to_sectors (len);
-  off_t i;
-  bool fail = false;
-  for (i = 0; !fail && i < blocks; i++)
-    {
-      if (byte_to_sector (inode, i * BLOCK_SECTOR_SIZE, false) > 4096)
-        fail = true;
-    }
-
-  if (fail)
-    {
-      // FIXME: need to remove these printfs
-      printf (">> INVALID INODE STATE: (len=%u)\n", len);
-      for (i = 0; !fail && i < blocks; i++)
-        {
-          off_t sec = byte_to_sector (inode, i * BLOCK_SECTOR_SIZE, false);
-          printf ("%d: %u\n", i, sec);
-        }
-      PANIC ("bad things");
-    }
-
-  return !fail;
-}
-
 /* Reads an inode from SECTOR
    and returns a `struct inode' that contains it.
    Returns a null pointer if memory allocation fails. */
@@ -271,7 +244,7 @@ inode_open (block_sector_t sector)
   lock_init (&inode->dir_lock);
   lock_init (&inode->metadata_lock);
   lock_init (&inode->extend_lock);
-  /* FIXME: readahead inode->sector? */
+
   return inode;
 }
 
@@ -291,7 +264,7 @@ inode_get_inumber (const struct inode *inode)
   return inode->sector;
 }
 
-// FIXME: COMMENT
+/* Release SECTOR traversing DEPTH deep through indirects. */
 static void 
 inode_close_sector (block_sector_t sector, int depth)
 {
@@ -306,7 +279,6 @@ inode_close_sector (block_sector_t sector, int depth)
       cache_end (block, false); 
     }
   
-  /* FIXME: any cache invalidation necessary? */
   free_map_release (sector, 1);
 }
 
@@ -379,7 +351,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      inode_sanitize (inode);
       block_sector_t sector_idx = byte_to_sector (inode, offset, false);
 
       if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)

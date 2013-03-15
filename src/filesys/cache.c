@@ -7,6 +7,7 @@
 #include "threads/malloc.h"
 #include "cache.h"
 #include "filesys.h"
+
 #include "threads/thread.h"
 #include "devices/timer.h"
 
@@ -52,6 +53,7 @@ static int cache_clock_cursor;
 /* Protect global cache state. */
 static struct lock cache_lock;
 
+/* Used for the read-ahead subsystem. */
 static block_sector_t rahead_queue[CACHE_MAX_READAHEAD];
 static unsigned rahead_start, rahead_size;
 static struct lock rahead_lock;

@@ -20,6 +20,11 @@ We're doing something that feels a little sleazy by storing directory
 locks and an is_directory bool on inodes. This is how linux does it,
 though, so there is precedent :-).
 
+Also, we discovered very late that our strategy for preventing cache
+reads during eviction is insufficient. It's causing us to fail persistence
+tests because we're reading incorrect data. We didn't have time to implement
+the scheme that we designed which is described below.
+
 >> Describe briefly which parts of the assignment were implemented by
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
@@ -384,6 +389,22 @@ static struct lock cache_lock;
 This lock monitors the cache_hash. It's acquired before we look for
   an entry to evict and before we flush the cache. 
 
+For read ahead:
+
+static block_sector_t rahead_queue[CACHE_MAX_READAHEAD];
+static unsigned rahead_start, rahead_size;
+static struct lock rahead_lock;
+static struct condition rahead_available;
+
+These variables are used to control readahead. 
+
+`rahead_queue` is a queue of blocks to be read ahead.
+`rahead_start` is where we are in the queue, currently.
+`rahead_size` is how many blocks are in the queue.
+`rahead_lock` is a monitor lock for the above variables.
+`rahead_available` is a cond-variable that read-ahead threads will wait on
+  until signalled that there is work ot be done.
+
 
 ---- ALGORITHMS ----
 
@@ -446,8 +467,14 @@ are locked on read/write to prevent nonatomic write artifacts.)
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
 
-A freshly evicted block is in three states:
-1. chosen for eviction: this entry is first 
+When a block is evicted it is put into the  "WRITING_DISK" state.
+If a request comes in for the block while it is in "WRITING_DISK" then
+the requesting thread will be blocked on the "finished" cond variable.
+
+Once the write finishes, the requesting thread will wake up and acquire
+the lock (eventually). It will then check that the sector number of the
+cache entry it just acquired is correct. If this is not the case then
+it will trigger the standard cache-miss behavior and cache in the sector.
 
 ---- RATIONALE ----
 
